@@ -26,6 +26,8 @@ impl VmHost for MockHost {
         self.sounds_played.push(filename.to_string());
     }
 
+    fn play_video(&mut self, _filename: &str, _start: i32, _end: i32, _exit_page: Option<&str>) {}
+
     fn karaoke_set(&mut self, channel: i32, mode: i32) {
         self.karaoke_settings.push((channel, mode));
     }

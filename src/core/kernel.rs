@@ -6,6 +6,7 @@ use crate::assets::ybm::YbmImage;
 use crate::audio::AudioManager;
 use crate::core::script_ast::ScriptProgram;
 use crate::core::script_vm::{UnrecognizedInstruction, VcdScriptVm, VmHost, VmState};
+use crate::video::VideoPlayer;
 use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -42,6 +43,7 @@ pub struct KernelHost<'a> {
     pub audio: &'a mut AudioManager,
     pub sprite_cache: &'a mut HashMap<String, YbmImage>,
     pub start_time: Instant,
+    pub pending_video: &'a mut Option<(String, i32, i32, Option<String>)>,
 }
 
 impl<'a> KernelHost<'a> {
@@ -78,6 +80,15 @@ impl<'a> VmHost for KernelHost<'a> {
         }
     }
 
+    fn play_video(&mut self, filename: &str, start_frame: i32, end_frame: i32, exit_page: Option<&str>) {
+        *self.pending_video = Some((
+            filename.to_string(),
+            start_frame,
+            end_frame,
+            exit_page.map(|s| s.to_string()),
+        ));
+    }
+
     fn karaoke_set(&mut self, _channel: i32, _mode: i32) {
         // Karaoke channel settings (recorded or log)
     }
@@ -102,6 +113,7 @@ pub struct VcdKernel {
     pub active_alert: Option<UnrecognizedInstruction>,
     pub sprite_cache: HashMap<String, YbmImage>,
     pub start_time: Instant,
+    pub active_video: Option<VideoPlayer>,
 }
 
 impl VcdKernel {
@@ -121,6 +133,7 @@ impl VcdKernel {
             active_alert: None,
             sprite_cache: HashMap::new(),
             start_time: Instant::now(),
+            active_video: None,
         }
     }
 
@@ -139,27 +152,39 @@ impl VcdKernel {
         self.sprite_cache.clear();
 
         let cls_path = self.find_file("AUTORUN.CLS");
-        let initial_page = if let Some(cls_file) = cls_path {
+        let mut initial_page = "HOMEPAGE.CHM".to_string();
+        let mut opening_video = None;
+
+        if let Some(cls_file) = cls_path {
             if let Ok(bytes) = std::fs::read(&cls_file) {
                 if let Ok(config) = AutoRunConfig::parse(&bytes) {
-                    let page = config.homepage_chm.clone();
+                    initial_page = config.homepage_chm.clone();
+                    if !config.opening_mpeg.is_empty() {
+                        opening_video = Some(config.opening_mpeg.clone());
+                    }
                     self.autorun_config = Some(config);
-                    page
-                } else {
-                    "HOMEPAGE.CHM".to_string()
                 }
-            } else {
-                "HOMEPAGE.CHM".to_string()
             }
-        } else {
-            "HOMEPAGE.CHM".to_string()
-        };
+        }
 
+        // Always load initial page first so page state and background are fully ready
         self.load_page(&initial_page, false)?;
+
+        // If an opening video is configured and exists, start playing it
+        if let Some(ref mpeg_name) = opening_video {
+            if self.find_file(mpeg_name).is_some() {
+                let _ = self.start_video(mpeg_name, 0, 0, None);
+            }
+        }
+
         Ok(())
     }
 
     pub fn load_page(&mut self, chm_name: &str, push_history: bool) -> Result<(), KernelError> {
+        if let Some(mut v) = self.active_video.take() {
+            v.stop();
+        }
+
         let path = self
             .find_file(chm_name)
             .ok_or_else(|| KernelError::FileNotFound(PathBuf::from(chm_name)))?;
@@ -230,16 +255,107 @@ impl VcdKernel {
         Ok(())
     }
 
+    pub fn is_video_active(&self) -> bool {
+        self.active_video.is_some()
+    }
+
+    pub fn start_video(
+        &mut self,
+        filename: &str,
+        start_frame: u32,
+        end_frame: u32,
+        exit_target: Option<String>,
+    ) -> Result<bool, KernelError> {
+        let video_path = self
+            .find_file(filename)
+            .ok_or_else(|| KernelError::FileNotFound(PathBuf::from(filename)))?;
+
+        let bytes = std::fs::read(&video_path)
+            .map_err(|e| KernelError::ChmParseError(format!("Failed to read video file: {}", e)))?;
+
+        self.audio.stop_bgm();
+        let sink = self.audio.create_video_sink();
+        let player = VideoPlayer::new(
+            &bytes,
+            filename.to_string(),
+            sink,
+            start_frame,
+            end_frame,
+            exit_target,
+        )
+        .map_err(|e| KernelError::ChmParseError(format!("Video init error: {}", e)))?;
+
+        self.active_video = Some(player);
+        Ok(true)
+    }
+
+    pub fn stop_video_and_exit(&mut self) -> Result<bool, KernelError> {
+        if let Some(mut player) = self.active_video.take() {
+            player.stop();
+            let exit_target = player.exit_target.clone();
+
+            if let Some(target) = exit_target {
+                self.load_page(&target, true)?;
+            } else {
+                // Resume current page BGSOUND if present
+                if let Some(ref doc) = self.current_page {
+                    for chunk in &doc.chunks {
+                        if let ChunkPayload::BgSound(snd) = chunk {
+                            if !snd.is_empty() {
+                                if let Some(p) = self.find_file(snd) {
+                                    self.audio.play_bgm_file(p);
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if matches!(self.vm.state, VmState::WaitingForVideo) {
+                self.vm.state = VmState::Running;
+                self.run_vm();
+            }
+
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    pub fn update_video(&mut self) -> bool {
+        if let Some(ref mut player) = self.active_video {
+            let updated = player.update();
+            if player.is_ended() {
+                let _ = self.stop_video_and_exit();
+                false
+            } else {
+                updated
+            }
+        } else {
+            false
+        }
+    }
+
     pub fn run_vm(&mut self) -> VmState {
-        let mut host = KernelHost {
-            disc_root: &self.disc_root,
-            canvas: &mut self.canvas,
-            cursor_pos: &mut self.cursor_pos,
-            audio: &mut self.audio,
-            sprite_cache: &mut self.sprite_cache,
-            start_time: self.start_time,
+        let mut pending_video = None;
+        let state = {
+            let mut host = KernelHost {
+                disc_root: &self.disc_root,
+                canvas: &mut self.canvas,
+                cursor_pos: &mut self.cursor_pos,
+                audio: &mut self.audio,
+                sprite_cache: &mut self.sprite_cache,
+                start_time: self.start_time,
+                pending_video: &mut pending_video,
+            };
+            self.vm.run_until_yield(&mut host)
         };
-        let state = self.vm.run_until_yield(&mut host);
+
+        if let Some((file, start, end, exit_page)) = pending_video {
+            let _ = self.start_video(&file, start.max(0) as u32, end.max(0) as u32, exit_page);
+        }
+
         if let VmState::PausedForAlert(ref alert) = state {
             self.active_alert = Some(alert.clone());
         }
@@ -300,6 +416,11 @@ impl VcdKernel {
         }
 
         let target = area.target.trim();
+        if target.to_uppercase().ends_with(".DAT") {
+            let started = self.start_video(target, 0, 0, None)?;
+            return Ok(started);
+        }
+
         if target.to_uppercase().ends_with(".CHM") && target != ".CHM" {
             self.load_page(target, true)?;
             Ok(true)
@@ -309,16 +430,32 @@ impl VcdKernel {
     }
 
     pub fn inject_remote_key(&mut self, key_code: i32) -> VmState {
+        if self.is_video_active() {
+            if key_code == 32 {
+                let _ = self.stop_video_and_exit();
+            }
+            return self.vm.state.clone();
+        }
+
         if matches!(self.vm.state, VmState::WaitingForKey { .. }) {
-            let mut host = KernelHost {
-                disc_root: &self.disc_root,
-                canvas: &mut self.canvas,
-                cursor_pos: &mut self.cursor_pos,
-                audio: &mut self.audio,
-                sprite_cache: &mut self.sprite_cache,
-                start_time: self.start_time,
+            let mut pending_video = None;
+            let state = {
+                let mut host = KernelHost {
+                    disc_root: &self.disc_root,
+                    canvas: &mut self.canvas,
+                    cursor_pos: &mut self.cursor_pos,
+                    audio: &mut self.audio,
+                    sprite_cache: &mut self.sprite_cache,
+                    start_time: self.start_time,
+                    pending_video: &mut pending_video,
+                };
+                self.vm.inject_key(key_code, &mut host)
             };
-            let state = self.vm.inject_key(key_code, &mut host);
+
+            if let Some((file, start, end, exit_page)) = pending_video {
+                let _ = self.start_video(&file, start.max(0) as u32, end.max(0) as u32, exit_page);
+            }
+
             if let VmState::PausedForAlert(ref alert) = state {
                 self.active_alert = Some(alert.clone());
             }
@@ -336,15 +473,24 @@ impl VcdKernel {
 
     pub fn skip_alert_and_continue(&mut self) -> VmState {
         self.active_alert = None;
-        let mut host = KernelHost {
-            disc_root: &self.disc_root,
-            canvas: &mut self.canvas,
-            cursor_pos: &mut self.cursor_pos,
-            audio: &mut self.audio,
-            sprite_cache: &mut self.sprite_cache,
-            start_time: self.start_time,
+        let mut pending_video = None;
+        let state = {
+            let mut host = KernelHost {
+                disc_root: &self.disc_root,
+                canvas: &mut self.canvas,
+                cursor_pos: &mut self.cursor_pos,
+                audio: &mut self.audio,
+                sprite_cache: &mut self.sprite_cache,
+                start_time: self.start_time,
+                pending_video: &mut pending_video,
+            };
+            self.vm.skip_unrecognized_and_continue(&mut host)
         };
-        let state = self.vm.skip_unrecognized_and_continue(&mut host);
+
+        if let Some((file, start, end, exit_page)) = pending_video {
+            let _ = self.start_video(&file, start.max(0) as u32, end.max(0) as u32, exit_page);
+        }
+
         if let VmState::PausedForAlert(ref alert) = state {
             self.active_alert = Some(alert.clone());
         }

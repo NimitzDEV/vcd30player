@@ -8,6 +8,7 @@ pub trait VmHost {
     fn draw_image(&mut self, filename: &str, x: i32, y: i32, mode: i32);
     fn draw_cursor(&mut self, x: i32, y: i32);
     fn play_sound(&mut self, filename: &str);
+    fn play_video(&mut self, filename: &str, start_frame: i32, end_frame: i32, exit_page: Option<&str>);
     fn karaoke_set(&mut self, channel: i32, mode: i32);
     fn get_time_ms(&self) -> u64;
     fn get_time_units(&self) -> i32 {
@@ -28,6 +29,7 @@ pub enum VmState {
     Running,
     WaitingForKey { target_var: u8 },
     WaitingForDelay { until_time: i32 },
+    WaitingForVideo,
     Finished,
     PausedForAlert(UnrecognizedInstruction),
     Error(String),
@@ -185,6 +187,18 @@ impl VcdScriptVm {
                 host.play_sound(&file);
                 self.pc = next_pc;
                 self.state = VmState::Running;
+            }
+            Statement::PlayVideo {
+                file,
+                start_frame,
+                end_frame,
+                exit_page,
+            } => {
+                let start = start_frame.eval(&self.variables);
+                let end = end_frame.eval(&self.variables);
+                host.play_video(&file, start, end, exit_page.as_deref());
+                self.pc = next_pc;
+                self.state = VmState::WaitingForVideo;
             }
             Statement::KaraokeSet(ch_expr, mode_expr) => {
                 let ch = ch_expr.eval(&self.variables);
@@ -390,6 +404,10 @@ impl VcdScriptVm {
             }
         }
 
+        if matches!(self.state, VmState::WaitingForVideo) {
+            return self.state.clone();
+        }
+
         const MAX_STEPS_PER_TICK: usize = 100_000;
         let mut steps = 0;
 
@@ -399,6 +417,7 @@ impl VcdScriptVm {
             match res {
                 VmState::WaitingForKey { .. }
                 | VmState::WaitingForDelay { .. }
+                | VmState::WaitingForVideo
                 | VmState::PausedForAlert(_)
                 | VmState::Finished
                 | VmState::Error(_) => return res,

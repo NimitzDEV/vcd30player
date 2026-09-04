@@ -1,4 +1,4 @@
-﻿//! VCDSCRIPT AST definitions and parser.
+//! VCDSCRIPT AST definitions and parser.
 
 use std::collections::BTreeMap;
 
@@ -72,6 +72,12 @@ pub enum Statement {
         mode: Expr,
     },
     PlaySound(String),
+    PlayVideo {
+        file: String,
+        start_frame: Expr,
+        end_frame: Expr,
+        exit_page: Option<String>,
+    },
     KaraokeSet(Expr, Expr),
     Goto(Expr),
     Gosub(Expr),
@@ -311,6 +317,48 @@ pub fn parse_single_statement(s: &str) -> Statement {
                 reason: format!("PLAYSOUND 必须包含带双引号的音频文件名: '{}'", rest),
             };
         }
+    }
+
+    // PLAYVIDEO "filename", start_frame, end_frame, "exit_page"
+    if upper.starts_with("PLAYVIDEO") {
+        let rest = trimmed[9..].trim();
+        if let Some((file, args)) = extract_string_and_args(rest) {
+            let parts: Vec<&str> = args.split(',').collect();
+            let start_frame = if !parts.is_empty() {
+                parse_expr(parts[0].trim()).unwrap_or(Expr::Const(0))
+            } else {
+                Expr::Const(0)
+            };
+            let end_frame = if parts.len() >= 2 {
+                parse_expr(parts[1].trim()).unwrap_or(Expr::Const(0))
+            } else {
+                Expr::Const(0)
+            };
+            let exit_page = if parts.len() >= 3 {
+                extract_quoted_string(parts[2].trim())
+                    .or_else(|| {
+                        let p = parts[2].trim();
+                        if !p.is_empty() {
+                            Some(p.trim_matches('"').to_string())
+                        } else {
+                            None
+                        }
+                    })
+            } else {
+                None
+            };
+
+            return Statement::PlayVideo {
+                file,
+                start_frame,
+                end_frame,
+                exit_page,
+            };
+        }
+        return Statement::Unknown {
+            raw: trimmed.to_string(),
+            reason: format!("无效的 PLAYVIDEO 参数: '{}'", rest),
+        };
     }
 
     // KARAOKE SET ch, mode

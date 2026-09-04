@@ -5,7 +5,7 @@ use crate::core::script_vm::VmState;
 use eframe::egui::{
     self, Color32, ColorImage, Pos2, Rect, Stroke, StrokeKind, TextureOptions, Vec2,
 };
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub struct VcdPlayerApp {
     pub kernel: VcdKernel,
@@ -68,7 +68,7 @@ impl VcdPlayerApp {
         setup_custom_fonts(&cc.egui_ctx);
 
         let mut kernel = VcdKernel::new();
-        let mut status = "就绪 - 请打开光盘目录".to_string();
+        let mut status = "空闲 - 请点击“打开光盘目录”载入 VCD 光盘".to_string();
 
         if let Some(root) = initial_disc {
             if root.exists() {
@@ -76,14 +76,6 @@ impl VcdPlayerApp {
                     status = format!("打开光盘失败: {}", e);
                 } else {
                     status = format!("已加载光盘: {}", root.display());
-                }
-            }
-        } else {
-            // Check default I:\ drive
-            let default_drive = Path::new(r"I:\");
-            if default_drive.exists() {
-                if let Ok(()) = kernel.open_disc(default_drive.to_path_buf()) {
-                    status = "已自动载入光驱 I:\\".to_string();
                 }
             }
         }
@@ -97,6 +89,25 @@ impl VcdPlayerApp {
             show_remote: true,
             hovered_hotspot: None,
             status_message: status,
+        }
+    }
+
+    /// Triggers texture upload from video player current frame to GPU.
+    fn refresh_video_texture(&mut self, ctx: &egui::Context) {
+        if let Some(ref player) = self.kernel.active_video {
+            let (w, h) = player.dimensions();
+            let color_image = ColorImage::from_rgba_unmultiplied(
+                [w as usize, h as usize],
+                player.current_frame(),
+            );
+
+            if let Some(tex) = &mut self.texture {
+                tex.set(color_image, TextureOptions::LINEAR);
+            } else {
+                self.texture =
+                    Some(ctx.load_texture("vcd30_canvas", color_image, TextureOptions::LINEAR));
+            }
+            self.texture_dirty = false;
         }
     }
 
@@ -147,18 +158,26 @@ impl eframe::App for VcdPlayerApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
 
-        // Drive active VM (e.g. running or waiting for delay)
-        if self.kernel.is_vm_active() {
-            let state = self.kernel.run_vm();
-            if matches!(state, VmState::Finished) {
-                let _ = self.kernel.go_back_or_home();
+        // Drive video playback or active VM
+        if self.kernel.is_video_active() {
+            let new_frame = self.kernel.update_video();
+            if new_frame || self.texture_dirty {
+                self.refresh_video_texture(&ctx);
             }
-            self.texture_dirty = true;
             ctx.request_repaint();
-        }
+        } else {
+            if self.kernel.is_vm_active() {
+                let state = self.kernel.run_vm();
+                if matches!(state, VmState::Finished) {
+                    let _ = self.kernel.go_back_or_home();
+                }
+                self.texture_dirty = true;
+                ctx.request_repaint();
+            }
 
-        if self.texture_dirty {
-            self.refresh_texture(&ctx);
+            if self.texture_dirty {
+                self.refresh_texture(&ctx);
+            }
         }
 
         // 1. Top Menu Bar Panel
@@ -266,6 +285,54 @@ impl eframe::App for VcdPlayerApp {
 
         // 2. Bottom Navigation & Status Bar Panel
         egui::Panel::bottom("bottom_bar").show(ui, |ui| {
+            // Video Playback Control Row (independent line, only active during video playback)
+            if self.kernel.is_video_active() {
+                ui.horizontal(|ui| {
+                    let mut stop_video = false;
+                    if let Some(ref mut player) = self.kernel.active_video {
+                        let is_playing = player.is_playing();
+                        let btn_text = if is_playing { "⏸ 暂停 (Space)" } else { "▶ 播放 (Space)" };
+                        if ui.button(btn_text).clicked() {
+                            player.toggle_play_pause();
+                        }
+
+                        if ui.button("⏹ 停止并返回 (ESC)").clicked() {
+                            stop_video = true;
+                        }
+
+                        ui.separator();
+
+                        let cur = player.current_time();
+                        let dur = player.duration();
+                        let cur_min = (cur / 60.0) as u32;
+                        let cur_sec = (cur % 60.0) as u32;
+                        let dur_min = (dur / 60.0) as u32;
+                        let dur_sec = (dur % 60.0) as u32;
+                        ui.label(format!("{:02}:{:02} / {:02}:{:02}", cur_min, cur_sec, dur_min, dur_sec));
+
+                        let mut seek_pos = cur;
+                        let slider = egui::Slider::new(&mut seek_pos, 0.0..=dur.max(1.0))
+                            .show_value(false)
+                            .text("");
+                        if ui.add(slider).changed() {
+                            player.seek(seek_pos);
+                        }
+
+                        ui.separator();
+
+                        let (w, h) = player.dimensions();
+                        let fps = player.framerate();
+                        ui.label(format!("🎬 {} ({}x{} @ {:.0}fps)", player.filename, w, h, fps));
+                    }
+
+                    if stop_video {
+                        let _ = self.kernel.stop_video_and_exit();
+                        self.texture_dirty = true;
+                    }
+                });
+                ui.separator();
+            }
+
             ui.horizontal(|ui| {
                 let can_back = !self.kernel.history_stack.is_empty();
                 let can_fwd = !self.kernel.forward_stack.is_empty();
@@ -325,48 +392,71 @@ impl eframe::App for VcdPlayerApp {
             });
         });
 
-        // 3. Keyboard Remote Control Handling
-        ctx.input(|i| {
-            if i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Space) {
-                self.kernel.inject_remote_key(31);
-                self.texture_dirty = true;
-            } else if i.key_pressed(egui::Key::Escape) || i.key_pressed(egui::Key::Backspace) {
-                self.kernel.inject_remote_key(32);
-                self.texture_dirty = true;
-            } else if i.key_pressed(egui::Key::ArrowUp) {
-                self.kernel.inject_remote_key(34);
-                self.texture_dirty = true;
-            } else if i.key_pressed(egui::Key::ArrowDown) {
-                self.kernel.inject_remote_key(35);
-                self.texture_dirty = true;
-            } else if i.key_pressed(egui::Key::ArrowLeft) {
-                self.kernel.inject_remote_key(36);
-                self.texture_dirty = true;
-            } else if i.key_pressed(egui::Key::ArrowRight) {
-                self.kernel.inject_remote_key(37);
-                self.texture_dirty = true;
-            } else {
-                let num_keys = [
-                    (egui::Key::Num0, 0),
-                    (egui::Key::Num1, 1),
-                    (egui::Key::Num2, 2),
-                    (egui::Key::Num3, 3),
-                    (egui::Key::Num4, 4),
-                    (egui::Key::Num5, 5),
-                    (egui::Key::Num6, 6),
-                    (egui::Key::Num7, 7),
-                    (egui::Key::Num8, 8),
-                    (egui::Key::Num9, 9),
-                ];
-                for (k, val) in num_keys {
-                    if i.key_pressed(k) {
-                        self.kernel.inject_remote_key(val);
-                        self.texture_dirty = true;
-                        break;
+        // 3. Keyboard Input Handling
+        if self.kernel.is_video_active() {
+            ctx.input(|i| {
+                if i.key_pressed(egui::Key::Space) {
+                    if let Some(ref mut player) = self.kernel.active_video {
+                        player.toggle_play_pause();
+                    }
+                } else if i.key_pressed(egui::Key::Escape) || i.key_pressed(egui::Key::Backspace) {
+                    let _ = self.kernel.stop_video_and_exit();
+                    self.texture_dirty = true;
+                } else if i.key_pressed(egui::Key::ArrowLeft) {
+                    if let Some(ref mut player) = self.kernel.active_video {
+                        let cur = player.current_time();
+                        player.seek(cur - 5.0);
+                    }
+                } else if i.key_pressed(egui::Key::ArrowRight) {
+                    if let Some(ref mut player) = self.kernel.active_video {
+                        let cur = player.current_time();
+                        player.seek(cur + 5.0);
                     }
                 }
-            }
-        });
+            });
+        } else {
+            ctx.input(|i| {
+                if i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Space) {
+                    self.kernel.inject_remote_key(31);
+                    self.texture_dirty = true;
+                } else if i.key_pressed(egui::Key::Escape) || i.key_pressed(egui::Key::Backspace) {
+                    self.kernel.inject_remote_key(32);
+                    self.texture_dirty = true;
+                } else if i.key_pressed(egui::Key::ArrowUp) {
+                    self.kernel.inject_remote_key(34);
+                    self.texture_dirty = true;
+                } else if i.key_pressed(egui::Key::ArrowDown) {
+                    self.kernel.inject_remote_key(35);
+                    self.texture_dirty = true;
+                } else if i.key_pressed(egui::Key::ArrowLeft) {
+                    self.kernel.inject_remote_key(36);
+                    self.texture_dirty = true;
+                } else if i.key_pressed(egui::Key::ArrowRight) {
+                    self.kernel.inject_remote_key(37);
+                    self.texture_dirty = true;
+                } else {
+                    let num_keys = [
+                        (egui::Key::Num0, 0),
+                        (egui::Key::Num1, 1),
+                        (egui::Key::Num2, 2),
+                        (egui::Key::Num3, 3),
+                        (egui::Key::Num4, 4),
+                        (egui::Key::Num5, 5),
+                        (egui::Key::Num6, 6),
+                        (egui::Key::Num7, 7),
+                        (egui::Key::Num8, 8),
+                        (egui::Key::Num9, 9),
+                    ];
+                    for (k, val) in num_keys {
+                        if i.key_pressed(k) {
+                            self.kernel.inject_remote_key(val);
+                            self.texture_dirty = true;
+                            break;
+                        }
+                    }
+                }
+            });
+        }
 
         // 4. Modal Dialog: Unrecognized Instruction Alert
         if let Some(alert) = self.kernel.active_alert.clone() {
@@ -471,6 +561,9 @@ impl eframe::App for VcdPlayerApp {
                         crate::core::script_vm::VmState::WaitingForDelay { .. } => {
                             "延时等待中".to_string()
                         }
+                        crate::core::script_vm::VmState::WaitingForVideo => {
+                            "🎬 视频播放中".to_string()
+                        }
                         crate::core::script_vm::VmState::Finished => "已结束".to_string(),
                         crate::core::script_vm::VmState::PausedForAlert(_) => "⚠️ 暂停警告".to_string(),
                         crate::core::script_vm::VmState::Error(err) => err.clone(),
@@ -506,7 +599,7 @@ impl eframe::App for VcdPlayerApp {
 
                 let painter = ui.painter();
 
-                // Draw background texture
+                // Draw background / video texture
                 if let Some(texture) = &self.texture {
                     painter.image(
                         texture.id(),
@@ -516,120 +609,178 @@ impl eframe::App for VcdPlayerApp {
                     );
                 }
 
-                // Render OSD Cursor if active (e.g. WEIGHT.CHM sex selection / height digit entry)
-                if let Some((cx, cy)) = self.kernel.cursor_pos {
-                    let p1 = self.canvas_to_screen(cx, cy, display_rect);
-                    let p2 = self.canvas_to_screen(cx + 12, cy + 12, display_rect);
-                    let c_rect = Rect::from_two_pos(p1, p2);
-                    painter.rect_filled(
-                        c_rect,
-                        2.0,
-                        Color32::from_rgba_unmultiplied(255, 230, 0, 80),
-                    );
-                    painter.rect_stroke(
-                        c_rect,
-                        2.0,
-                        Stroke::new(2.0, Color32::from_rgb(255, 230, 0)),
-                        StrokeKind::Inside,
-                    );
+                // If empty state (no disc loaded and no video active)
+                let is_empty = self.kernel.disc_root.as_os_str().is_empty()
+                    && self.kernel.current_page.is_none()
+                    && !self.kernel.is_video_active();
+
+                if is_empty {
+                    let card_rect = Rect::from_center_size(display_rect.center(), Vec2::new(340.0, 190.0));
+                    painter.rect_filled(card_rect, 8.0, Color32::from_rgb(24, 26, 34));
+                    painter.rect_stroke(card_rect, 8.0, Stroke::new(1.5, Color32::from_rgb(60, 75, 100)), StrokeKind::Inside);
+
                     painter.text(
-                        p1 - Vec2::new(4.0, 0.0),
-                        egui::Align2::RIGHT_CENTER,
-                        "▶",
-                        egui::FontId::proportional(16.0),
-                        Color32::from_rgb(255, 230, 0),
+                        card_rect.center() - Vec2::new(0.0, 42.0),
+                        egui::Align2::CENTER_CENTER,
+                        "💿 VCD 3.0 交互系统",
+                        egui::FontId::proportional(18.0),
+                        Color32::from_rgb(225, 235, 255),
                     );
-                }
 
-                // Mouse interaction & Hit testing
-                let response = ui.interact(
-                    display_rect,
-                    ui.id().with("vcd_screen"),
-                    egui::Sense::click_and_drag(),
-                );
-                let hover_pos = ctx.input(|i| i.pointer.hover_pos());
+                    painter.text(
+                        card_rect.center() - Vec2::new(0.0, 12.0),
+                        egui::Align2::CENTER_CENTER,
+                        "当前未载入光盘，请选择 VCD 光盘根目录开始体验",
+                        egui::FontId::proportional(12.0),
+                        Color32::from_rgb(170, 180, 200),
+                    );
 
-                let mut current_hit_area = None;
-                self.hovered_hotspot = None;
+                    let btn_rect = Rect::from_center_size(card_rect.center() + Vec2::new(0.0, 38.0), Vec2::new(180.0, 36.0));
+                    let btn_resp = ui.interact(btn_rect, ui.id().with("empty_open_disc_btn"), egui::Sense::click());
+                    let btn_bg = if btn_resp.hovered() {
+                        Color32::from_rgb(45, 100, 180)
+                    } else {
+                        Color32::from_rgb(32, 75, 140)
+                    };
+                    painter.rect_filled(btn_rect, 6.0, btn_bg);
+                    painter.rect_stroke(btn_rect, 6.0, Stroke::new(1.0, Color32::from_rgb(90, 145, 220)), StrokeKind::Inside);
+                    painter.text(
+                        btn_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "📁 打开光盘目录...",
+                        egui::FontId::proportional(14.0),
+                        Color32::WHITE,
+                    );
 
-                if let Some(mouse_pos) = hover_pos {
-                    if let Some((cx, cy)) = self.screen_to_canvas(mouse_pos, display_rect) {
-                        if let Some(area) = self.kernel.hit_test(cx, cy) {
-                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                            self.hovered_hotspot = Some(area.target.clone());
-                            current_hit_area = Some(area.clone());
-                        }
-                    }
-                }
-
-                // Handle click on hotspot
-                if response.clicked() {
-                    if let Some(area) = current_hit_area {
-                        match self.kernel.activate_hotspot(&area) {
-                            Ok(true) => {
-                                self.status_message = format!("已跳转至: {}", area.target);
+                    if btn_resp.clicked() {
+                        if let Some(folder) = rfd::FileDialog::new().pick_folder() {
+                            if let Err(e) = self.kernel.open_disc(folder.clone()) {
+                                self.status_message = format!("打开失败: {}", e);
+                            } else {
+                                self.status_message = format!("已打开: {}", folder.display());
                                 self.texture_dirty = true;
                             }
-                            Ok(false) => {
-                                self.status_message = format!("触发动作: {}", area.target);
-                            }
-                            Err(e) => {
-                                self.status_message = format!("跳转失败: {}", e);
-                            }
                         }
                     }
                 }
 
-                // Debug: Draw Hotspots overlays
-                if self.show_hotspots {
-                    if let Some(doc) = &self.kernel.current_page {
-                        for area in doc.get_all_hotspots() {
-                            let (min_x, min_y, max_x, max_y) = area.display_bounds();
-                            let p1 = self.canvas_to_screen(
-                                min_x,
-                                min_y,
-                                display_rect,
-                            );
-                            let p2 = self.canvas_to_screen(
-                                max_x,
-                                max_y,
-                                display_rect,
-                            );
-                            let r = Rect::from_two_pos(p1, p2);
+                // If video is active, keep canvas completely clean (no cursor, no hotspot overlays)
+                if !self.kernel.is_video_active() {
+                    // Render OSD Cursor if active (e.g. WEIGHT.CHM sex selection / height digit entry)
+                    if let Some((cx, cy)) = self.kernel.cursor_pos {
+                        let p1 = self.canvas_to_screen(cx, cy, display_rect);
+                        let p2 = self.canvas_to_screen(cx + 12, cy + 12, display_rect);
+                        let c_rect = Rect::from_two_pos(p1, p2);
+                        painter.rect_filled(
+                            c_rect,
+                            2.0,
+                            Color32::from_rgba_unmultiplied(255, 230, 0, 80),
+                        );
+                        painter.rect_stroke(
+                            c_rect,
+                            2.0,
+                            Stroke::new(2.0, Color32::from_rgb(255, 230, 0)),
+                            StrokeKind::Inside,
+                        );
+                        painter.text(
+                            p1 - Vec2::new(4.0, 0.0),
+                            egui::Align2::RIGHT_CENTER,
+                            "▶",
+                            egui::FontId::proportional(16.0),
+                            Color32::from_rgb(255, 230, 0),
+                        );
+                    }
 
-                            let is_hovered = self.hovered_hotspot.as_deref() == Some(&area.target);
-                            let stroke_color = if is_hovered {
-                                Color32::from_rgb(255, 230, 0)
-                            } else {
-                                Color32::from_rgba_unmultiplied(0, 255, 255, 180)
-                            };
+                    // Mouse interaction & Hit testing
+                    let response = ui.interact(
+                        display_rect,
+                        ui.id().with("vcd_screen"),
+                        egui::Sense::click_and_drag(),
+                    );
+                    let hover_pos = ctx.input(|i| i.pointer.hover_pos());
 
-                            painter.rect_stroke(
-                                r,
-                                2.0,
-                                Stroke::new(1.5, stroke_color),
-                                StrokeKind::Inside,
-                            );
-                            painter.rect_filled(
-                                r,
-                                2.0,
-                                Color32::from_rgba_unmultiplied(
-                                    0,
-                                    255,
-                                    255,
-                                    if is_hovered { 60 } else { 20 },
-                                ),
-                            );
+                    let mut current_hit_area = None;
+                    self.hovered_hotspot = None;
 
-                            // Small label
-                            let font_id = egui::FontId::proportional(11.0);
-                            painter.text(
-                                r.min + Vec2::new(3.0, 2.0),
-                                egui::Align2::LEFT_TOP,
-                                &area.target,
-                                font_id,
-                                stroke_color,
-                            );
+                    if let Some(mouse_pos) = hover_pos {
+                        if let Some((cx, cy)) = self.screen_to_canvas(mouse_pos, display_rect) {
+                            if let Some(area) = self.kernel.hit_test(cx, cy) {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                self.hovered_hotspot = Some(area.target.clone());
+                                current_hit_area = Some(area.clone());
+                            }
+                        }
+                    }
+
+                    // Handle click on hotspot
+                    if response.clicked() {
+                        if let Some(area) = current_hit_area {
+                            match self.kernel.activate_hotspot(&area) {
+                                Ok(true) => {
+                                    self.status_message = format!("已跳转至: {}", area.target);
+                                    self.texture_dirty = true;
+                                }
+                                Ok(false) => {
+                                    self.status_message = format!("触发动作: {}", area.target);
+                                }
+                                Err(e) => {
+                                    self.status_message = format!("跳转失败: {}", e);
+                                }
+                            }
+                        }
+                    }
+
+                    // Debug: Draw Hotspots overlays
+                    if self.show_hotspots {
+                        if let Some(doc) = &self.kernel.current_page {
+                            for area in doc.get_all_hotspots() {
+                                let (min_x, min_y, max_x, max_y) = area.display_bounds();
+                                let p1 = self.canvas_to_screen(
+                                    min_x,
+                                    min_y,
+                                    display_rect,
+                                );
+                                let p2 = self.canvas_to_screen(
+                                    max_x,
+                                    max_y,
+                                    display_rect,
+                                );
+                                let r = Rect::from_two_pos(p1, p2);
+
+                                let is_hovered = self.hovered_hotspot.as_deref() == Some(&area.target);
+                                let stroke_color = if is_hovered {
+                                    Color32::from_rgb(255, 230, 0)
+                                } else {
+                                    Color32::from_rgba_unmultiplied(0, 255, 255, 180)
+                                };
+
+                                painter.rect_stroke(
+                                    r,
+                                    2.0,
+                                    Stroke::new(1.5, stroke_color),
+                                    StrokeKind::Inside,
+                                );
+                                painter.rect_filled(
+                                    r,
+                                    2.0,
+                                    Color32::from_rgba_unmultiplied(
+                                        0,
+                                        255,
+                                        255,
+                                        if is_hovered { 60 } else { 20 },
+                                    ),
+                                );
+
+                                // Small label
+                                let font_id = egui::FontId::proportional(11.0);
+                                painter.text(
+                                    r.min + Vec2::new(3.0, 2.0),
+                                    egui::Align2::LEFT_TOP,
+                                    &area.target,
+                                    font_id,
+                                    stroke_color,
+                                );
+                            }
                         }
                     }
                 }

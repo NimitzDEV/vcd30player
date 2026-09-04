@@ -7,3 +7,6 @@ edition = "2024"
 eframe = "0.36.1"
 rfd = "0.17.2"
 rodio = "0.20"
+
+[build-dependencies]
+cc = "1.2"

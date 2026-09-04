@@ -1,4 +1,4 @@
-﻿//! Audio manager implementation using rodio with graceful fallback for headless/silent systems.
+//! Audio manager implementation using rodio with graceful fallback for headless/silent systems.
 
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
 use std::collections::HashMap;
@@ -35,6 +35,12 @@ impl AudioManager {
 
     pub fn is_audio_available(&self) -> bool {
         self.stream_handle.is_some()
+    }
+
+    /// Creates a dedicated Sink for video MP2 audio playback.
+    pub fn create_video_sink(&self) -> Option<Sink> {
+        let handle = self.stream_handle.as_ref()?;
+        Sink::try_new(handle).ok()
     }
 
     /// Plays a one-shot sound effect asynchronously from raw WAV bytes.

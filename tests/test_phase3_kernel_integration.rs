@@ -1,0 +1,95 @@
+﻿use std::path::PathBuf;
+use vcd30_player::core::kernel::VcdKernel;
+use vcd30_player::core::script_vm::VmState;
+
+const DISC_ROOT: &str = r"I:\";
+
+#[test]
+fn test_kernel_tb_script_and_hotspot_routing() {
+    let disc_path = PathBuf::from(DISC_ROOT);
+    if !disc_path.exists() {
+        eprintln!("Disc I:\\ not mounted, skipping test");
+        return;
+    }
+
+    let mut kernel = VcdKernel::new();
+    kernel.open_disc(disc_path).unwrap();
+
+    // Navigate to T_B.CHM
+    kernel.load_page("T_B.CHM", true).unwrap();
+    assert_eq!(kernel.current_page_name, "T_B.CHM");
+
+    // Hit test on Option 1 (56, 114) to (68, 127)
+    let hit = kernel.hit_test(60, 120);
+    assert!(hit.is_some());
+    let area = hit.unwrap().clone();
+    assert_eq!(
+        area.script_entry_line,
+        Some(100),
+        "Option 1 should route to script line 100"
+    );
+
+    // Click Option 1
+    let activated = kernel.activate_hotspot(&area).unwrap();
+    assert!(activated);
+
+    // Verify script updated variable A = 1
+    assert_eq!(kernel.vm.get_variable(b'A'), 1);
+
+    // Hit test on Next Page button (260, 255)
+    let next_hit = kernel.hit_test(260, 255).unwrap().clone();
+    assert_eq!(next_hit.script_entry_line, None);
+    assert_eq!(next_hit.target, "T_C.CHM");
+
+    // Click Next Page -> navigates to T_C.CHM
+    kernel.activate_hotspot(&next_hit).unwrap();
+    assert_eq!(kernel.current_page_name, "T_C.CHM");
+}
+
+#[test]
+fn test_kernel_weight_interactive_script_and_remote_keys() {
+    let disc_path = PathBuf::from(DISC_ROOT);
+    if !disc_path.exists() {
+        return;
+    }
+
+    let mut kernel = VcdKernel::new();
+    kernel.open_disc(disc_path).unwrap();
+
+    // Navigate to WEIGHT.CHM
+    kernel.load_page("WEIGHT.CHM", true).unwrap();
+    assert_eq!(kernel.current_page_name, "WEIGHT.CHM");
+
+    // Should stop at line 50: CALL IRKEY(X) waiting for input
+    assert!(matches!(
+        kernel.vm.state,
+        VmState::WaitingForKey { target_var: b'X' }
+    ));
+
+    // Cursor should be at (272, 123) (Man)
+    assert_eq!(kernel.cursor_pos, Some((272, 123)));
+
+    // Press Down arrow (35) -> moves cursor to (294, 123) (Woman)
+    let state_down = kernel.inject_remote_key(35);
+    assert!(matches!(
+        state_down,
+        VmState::WaitingForKey { target_var: b'X' }
+    ));
+    assert_eq!(kernel.cursor_pos, Some((294, 123)));
+
+    // Press Up arrow (34) -> moves cursor back to (272, 123) (Man)
+    let state_up = kernel.inject_remote_key(34);
+    assert!(matches!(
+        state_up,
+        VmState::WaitingForKey { target_var: b'X' }
+    ));
+    assert_eq!(kernel.cursor_pos, Some((272, 123)));
+
+    // Press Confirm (31) on Man -> sets S = 1, enters line 200, waits for height input!
+    let state_enter = kernel.inject_remote_key(31);
+    assert_eq!(kernel.vm.get_variable(b'S'), 1);
+    assert!(matches!(
+        state_enter,
+        VmState::WaitingForKey { target_var: b'K' }
+    ));
+}

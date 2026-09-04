@@ -52,6 +52,7 @@ pub struct MapArea {
     pub x2: i32,
     pub y2: i32,
     pub target: String,
+    pub script_entry_line: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -247,6 +248,14 @@ impl CompHtmlDoc {
                         let y2 = i32::from_be_bytes(c_data[0x138..0x13c].try_into().unwrap());
                         let target = extract_null_terminated_str(&c_data[0x13c..]);
 
+                        // Check offset 100 (0x64) for VCDSCRIPT target line number (e.g. "100", "150", "200")
+                        let script_entry_line = if c_data.len() > 100 {
+                            let s = extract_null_terminated_str(&c_data[100..]);
+                            s.parse::<u32>().ok()
+                        } else {
+                            None
+                        };
+
                         areas.push(MapArea {
                             area_id,
                             x1,
@@ -254,6 +263,7 @@ impl CompHtmlDoc {
                             x2,
                             y2,
                             target,
+                            script_entry_line,
                         });
                     }
 

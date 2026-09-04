@@ -56,26 +56,38 @@ pub struct MapArea {
 }
 
 impl MapArea {
-    /// Returns the effective bounding box `(min_x, min_y, max_x, max_y)`.
-    /// Point or small icon hotspots (e.g. return buttons with x1=300, y1=263) are
-    /// expanded so that mouse clicks and hover can comfortably hit them.
-    pub fn effective_bounds(&self) -> (i32, i32, i32, i32) {
-        let mut min_x = self.x1.min(self.x2);
-        let mut max_x = self.x1.max(self.x2);
-        let mut min_y = self.y1.min(self.y2);
-        let mut max_y = self.y1.max(self.y2);
-
-        if max_x - min_x < 24 {
-            let mid_x = (min_x + max_x) / 2;
-            min_x = (mid_x - 24).max(0);
-            max_x = (mid_x + 24).min(352);
-        }
-        if max_y - min_y < 16 {
-            let mid_y = (min_y + max_y) / 2;
-            min_y = (mid_y - 16).max(0);
-            max_y = (mid_y + 16).min(288);
-        }
+    /// Returns the exact bounding box `(min_x, min_y, max_x, max_y)` as authored.
+    pub fn raw_bounds(&self) -> (i32, i32, i32, i32) {
+        let min_x = self.x1.min(self.x2);
+        let max_x = self.x1.max(self.x2);
+        let min_y = self.y1.min(self.y2);
+        let max_y = self.y1.max(self.y2);
         (min_x, min_y, max_x, max_y)
+    }
+
+    /// Whether this hotspot is a degenerate zero-area / point anchor (e.g. x1 == x2 && y1 == y2).
+    pub fn is_point_hotspot(&self) -> bool {
+        let (min_x, min_y, max_x, max_y) = self.raw_bounds();
+        (max_x - min_x) <= 3 && (max_y - min_y) <= 3
+    }
+
+    /// Returns display bounds for debug overlay rendering.
+    /// Point hotspots are rendered with an indicator box (e.g. +-12px),
+    /// while real button hotspots are rendered with exact boundaries.
+    pub fn display_bounds(&self) -> (i32, i32, i32, i32) {
+        let (min_x, min_y, max_x, max_y) = self.raw_bounds();
+        if self.is_point_hotspot() {
+            let mid_x = (min_x + max_x) / 2;
+            let mid_y = (min_y + max_y) / 2;
+            (
+                (mid_x - 12).max(0),
+                (mid_y - 12).max(0),
+                (mid_x + 12).min(352),
+                (mid_y + 12).min(288),
+            )
+        } else {
+            (min_x, min_y, max_x, max_y)
+        }
     }
 }
 

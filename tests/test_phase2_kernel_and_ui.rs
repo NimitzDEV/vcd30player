@@ -169,3 +169,50 @@ fn test_ok_help1_polygon_hotspot_navigation() {
     assert!(activated2);
     assert_eq!(kernel.current_page_name, "HOME.CHM");
 }
+
+#[test]
+fn test_psyche_dense_hotspots_no_overlap() {
+    let disc_path = PathBuf::from(DISC_ROOT);
+    if !disc_path.exists() {
+        return;
+    }
+
+    let mut kernel = VcdKernel::new();
+    kernel.open_disc(disc_path).unwrap();
+
+    // Load PSYCHE.CHM
+    kernel.load_page("PSYCHE.CHM", true).unwrap();
+    assert_eq!(kernel.current_page_name, "PSYCHE.CHM");
+
+    // Option 1: Y in 114..127
+    let hit1 = kernel.hit_test(60, 120).expect("Should hit Option 1");
+    assert_eq!(hit1.script_entry_line, Some(100));
+
+    // Option 2: Y in 127..140 (crucial test: must hit Option 2, NOT Option 1!)
+    let hit2 = kernel.hit_test(60, 133).expect("Should hit Option 2");
+    assert_eq!(
+        hit2.script_entry_line,
+        Some(150),
+        "Clicking Option 2 must hit line 150 without being shadowed by Option 1"
+    );
+
+    // Option 3: Y in 140..153 (crucial test: must hit Option 3, NOT Option 2!)
+    let hit3 = kernel.hit_test(60, 146).expect("Should hit Option 3");
+    assert_eq!(
+        hit3.script_entry_line,
+        Some(180),
+        "Clicking Option 3 must hit line 180 without being shadowed by Option 2"
+    );
+
+    // Option 4: Y in 204..215
+    let hit4 = kernel.hit_test(60, 210).expect("Should hit Option 4");
+    assert_eq!(hit4.script_entry_line, Some(200));
+
+    // Option 5: Y in 216..227
+    let hit5 = kernel.hit_test(60, 222).expect("Should hit Option 5");
+    assert_eq!(hit5.script_entry_line, Some(250));
+
+    // Option 6: Y in 229..241
+    let hit6 = kernel.hit_test(60, 235).expect("Should hit Option 6");
+    assert_eq!(hit6.script_entry_line, Some(280));
+}

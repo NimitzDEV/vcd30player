@@ -584,7 +584,7 @@ impl eframe::App for VcdPlayerApp {
                 if self.show_hotspots {
                     if let Some(doc) = &self.kernel.current_page {
                         for area in doc.get_all_hotspots() {
-                            let (min_x, min_y, max_x, max_y) = area.effective_bounds();
+                            let (min_x, min_y, max_x, max_y) = area.display_bounds();
                             let p1 = self.canvas_to_screen(
                                 min_x,
                                 min_y,

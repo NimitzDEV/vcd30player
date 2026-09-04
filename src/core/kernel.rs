@@ -255,14 +255,40 @@ impl VcdKernel {
 
     pub fn hit_test(&self, x: i32, y: i32) -> Option<&MapArea> {
         let doc = self.current_page.as_ref()?;
-        for area in doc.get_all_hotspots() {
-            let (min_x, min_y, max_x, max_y) = area.effective_bounds();
+        let all_hotspots = doc.get_all_hotspots();
 
-            if x >= min_x && x <= max_x && y >= min_y && y <= max_y {
-                return Some(area);
+        // Phase 1: Exact hit test on real (non-point) hotspots.
+        // Zero expansion! Strict adherence to authored geometry.
+        for area in &all_hotspots {
+            if !area.is_point_hotspot() {
+                let (min_x, min_y, max_x, max_y) = area.raw_bounds();
+                if x >= min_x && x <= max_x && y >= min_y && y <= max_y {
+                    return Some(area);
+                }
             }
         }
-        None
+
+        // Phase 2: Proximity fallback for degenerate point-like hotspots (e.g. return icon at (300, 263)).
+        // Only triggers if mouse is not inside any real button.
+        const MAX_POINT_RADIUS_SQ: i32 = 16 * 16; // 16-pixel radius
+        let mut best_candidate: Option<(&MapArea, i32)> = None;
+
+        for area in &all_hotspots {
+            if area.is_point_hotspot() {
+                let (min_x, min_y, max_x, max_y) = area.raw_bounds();
+                let mid_x = (min_x + max_x) / 2;
+                let mid_y = (min_y + max_y) / 2;
+                let dist_sq = (x - mid_x) * (x - mid_x) + (y - mid_y) * (y - mid_y);
+
+                if dist_sq <= MAX_POINT_RADIUS_SQ {
+                    if best_candidate.map_or(true, |(_, d)| dist_sq < d) {
+                        best_candidate = Some((area, dist_sq));
+                    }
+                }
+            }
+        }
+
+        best_candidate.map(|(area, _)| area)
     }
 
     pub fn activate_hotspot(&mut self, area: &MapArea) -> Result<bool, KernelError> {

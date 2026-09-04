@@ -55,6 +55,30 @@ pub struct MapArea {
     pub script_entry_line: Option<u32>,
 }
 
+impl MapArea {
+    /// Returns the effective bounding box `(min_x, min_y, max_x, max_y)`.
+    /// Point or small icon hotspots (e.g. return buttons with x1=300, y1=263) are
+    /// expanded so that mouse clicks and hover can comfortably hit them.
+    pub fn effective_bounds(&self) -> (i32, i32, i32, i32) {
+        let mut min_x = self.x1.min(self.x2);
+        let mut max_x = self.x1.max(self.x2);
+        let mut min_y = self.y1.min(self.y2);
+        let mut max_y = self.y1.max(self.y2);
+
+        if max_x - min_x < 24 {
+            let mid_x = (min_x + max_x) / 2;
+            min_x = (mid_x - 24).max(0);
+            max_x = (mid_x + 24).min(352);
+        }
+        if max_y - min_y < 16 {
+            let mid_y = (min_y + max_y) / 2;
+            min_y = (mid_y - 16).max(0);
+            max_y = (mid_y + 16).min(288);
+        }
+        (min_x, min_y, max_x, max_y)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImageElement {
     pub x: i32,

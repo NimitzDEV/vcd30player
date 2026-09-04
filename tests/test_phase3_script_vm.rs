@@ -1,4 +1,4 @@
-﻿use std::path::Path;
+use std::path::Path;
 use vcd30_player::assets::chm::CompHtmlDoc;
 use vcd30_player::core::script_ast::ScriptProgram;
 use vcd30_player::core::script_vm::{VcdScriptVm, VmHost, VmState};
@@ -153,4 +153,37 @@ fn test_vm_tb_script_execution() {
         .iter()
         .any(|(f, x, y, _)| f.contains("T_DOT.YBM") && *x == 45 && *y == 117);
     assert!(dot_drawn, "Option 1 should draw T_DOT.YBM at (45, 117)");
+}
+
+#[test]
+fn test_vm_time_delay_loop_yielding() {
+    let code = r#"
+10 CALL TIME(X) : X = X + 50
+20 CALL TIME(Y)
+30 IF Y < X THEN GOTO 20
+40 A = 999
+50 END
+"#;
+    let prog = ScriptProgram::parse(code);
+    let mut vm = VcdScriptVm::new();
+    let mut host = MockHost::default();
+    host.time_ms = 0;
+
+    vm.load_program(prog);
+    let state = vm.run_until_yield(&mut host);
+
+    // Should yield in WaitingForDelay at line 30, waiting until time unit 50
+    assert_eq!(state, VmState::WaitingForDelay { until_time: 50 });
+    assert_eq!(vm.get_variable(b'A'), 0);
+
+    // If time has not elapsed yet (1000ms / 33 = 30 < 50)
+    host.time_ms = 1000;
+    let state2 = vm.run_until_yield(&mut host);
+    assert_eq!(state2, VmState::WaitingForDelay { until_time: 50 });
+
+    // When time elapses (2000ms / 33 = 60 >= 50)
+    host.time_ms = 2000;
+    let state3 = vm.run_until_yield(&mut host);
+    assert_eq!(state3, VmState::Finished);
+    assert_eq!(vm.get_variable(b'A'), 999);
 }

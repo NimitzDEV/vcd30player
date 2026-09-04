@@ -1,6 +1,7 @@
 //! VCD 3.0 Player GUI application implementation using eframe/egui.
 
 use crate::core::kernel::{CANVAS_HEIGHT, CANVAS_WIDTH, VcdKernel};
+use crate::core::script_vm::VmState;
 use eframe::egui::{
     self, Color32, ColorImage, Pos2, Rect, Stroke, StrokeKind, TextureOptions, Vec2,
 };
@@ -145,6 +146,16 @@ impl VcdPlayerApp {
 impl eframe::App for VcdPlayerApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+
+        // Drive active VM (e.g. running or waiting for delay)
+        if self.kernel.is_vm_active() {
+            let state = self.kernel.run_vm();
+            if matches!(state, VmState::Finished) {
+                let _ = self.kernel.go_back_or_home();
+            }
+            self.texture_dirty = true;
+            ctx.request_repaint();
+        }
 
         if self.texture_dirty {
             self.refresh_texture(&ctx);
@@ -457,6 +468,9 @@ impl eframe::App for VcdPlayerApp {
                         crate::core::script_vm::VmState::WaitingForKey { target_var } => {
                             format!("等待输入 -> {}", *target_var as char)
                         }
+                        crate::core::script_vm::VmState::WaitingForDelay { .. } => {
+                            "延时等待中".to_string()
+                        }
                         crate::core::script_vm::VmState::Finished => "已结束".to_string(),
                         crate::core::script_vm::VmState::PausedForAlert(_) => "⚠️ 暂停警告".to_string(),
                         crate::core::script_vm::VmState::Error(err) => err.clone(),
@@ -570,14 +584,15 @@ impl eframe::App for VcdPlayerApp {
                 if self.show_hotspots {
                     if let Some(doc) = &self.kernel.current_page {
                         for area in doc.get_all_hotspots() {
+                            let (min_x, min_y, max_x, max_y) = area.effective_bounds();
                             let p1 = self.canvas_to_screen(
-                                area.x1.min(area.x2),
-                                area.y1.min(area.y2),
+                                min_x,
+                                min_y,
                                 display_rect,
                             );
                             let p2 = self.canvas_to_screen(
-                                area.x1.max(area.x2),
-                                area.y1.max(area.y2),
+                                max_x,
+                                max_y,
                                 display_rect,
                             );
                             let r = Rect::from_two_pos(p1, p2);

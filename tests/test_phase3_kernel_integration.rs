@@ -1,4 +1,4 @@
-﻿use std::path::PathBuf;
+use std::path::PathBuf;
 use vcd30_player::core::kernel::VcdKernel;
 use vcd30_player::core::script_vm::VmState;
 
@@ -56,13 +56,23 @@ fn test_kernel_weight_interactive_script_and_remote_keys() {
     let mut kernel = VcdKernel::new();
     kernel.open_disc(disc_path).unwrap();
 
+    // Navigate to PROGRAM.CHM first, so history stack has ["HOMEPAGE.CHM", "PROGRAM.CHM"]
+    kernel.load_page("PROGRAM.CHM", true).unwrap();
+
     // Navigate to WEIGHT.CHM
     kernel.load_page("WEIGHT.CHM", true).unwrap();
     assert_eq!(kernel.current_page_name, "WEIGHT.CHM");
 
+    // Initially lines 6-8 yields WaitingForDelay for 30 frames (intro delay)
+    assert!(matches!(kernel.vm.state, VmState::WaitingForDelay { .. }));
+
+    // Fast-forward past the 30-frame intro delay
+    kernel.start_time = std::time::Instant::now() - std::time::Duration::from_secs(2);
+    let state = kernel.run_vm();
+
     // Should stop at line 50: CALL IRKEY(X) waiting for input
     assert!(matches!(
-        kernel.vm.state,
+        state,
         VmState::WaitingForKey { target_var: b'X' }
     ));
 
@@ -92,4 +102,44 @@ fn test_kernel_weight_interactive_script_and_remote_keys() {
         state_enter,
         VmState::WaitingForKey { target_var: b'K' }
     ));
+
+    // Enter height digits: 1, 7, 5
+    kernel.inject_remote_key(1);
+    kernel.inject_remote_key(7);
+    let state_h = kernel.inject_remote_key(5);
+    assert_eq!(kernel.vm.get_variable(b'H'), 175);
+    // Now waiting for weight input at line 5000: CALL IRKEY(K)
+    assert!(matches!(
+        state_h,
+        VmState::WaitingForKey { target_var: b'K' }
+    ));
+
+    // Enter weight digits: 6, 5, then Confirm (31)
+    kernel.inject_remote_key(6);
+    kernel.inject_remote_key(5);
+    let state_calc = kernel.inject_remote_key(31);
+    assert_eq!(kernel.vm.get_variable(b'W'), 65);
+
+    // Verify: after calculating result (ideal weight: 61..73kg),
+    // VM does NOT crash into Error, but cleanly yields WaitingForDelay!
+    assert!(
+        matches!(state_calc, VmState::WaitingForDelay { .. }),
+        "Expected WaitingForDelay on result screen, got {:?}",
+        state_calc
+    );
+
+    // Test Issue 2 Part B: Hit test on return button (anchor at 300, 263)
+    // Thanks to bounding box expansion, clicking near the icon (e.g. 295, 260) succeeds:
+    let hit = kernel.hit_test(295, 260);
+    assert!(hit.is_some(), "Near-anchor click on return button should succeed");
+    assert_eq!(hit.unwrap().target, "PROGRAM.CHM");
+
+    // Test Issue 1: Remote control key 32 ("返回/退出") while in delay state:
+    // Should immediately navigate back to PROGRAM.CHM!
+    kernel.inject_remote_key(32);
+    assert_eq!(
+        kernel.current_page_name, "PROGRAM.CHM",
+        "Key 32 should navigate back from WEIGHT.CHM to PROGRAM.CHM"
+    );
 }
+

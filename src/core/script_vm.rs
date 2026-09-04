@@ -1,6 +1,6 @@
 //! VCDSCRIPT Coroutine Virtual Machine implementation.
 
-use crate::core::script_ast::{CondOp, ScriptProgram, Statement};
+use crate::core::script_ast::{CondOp, Expr, ScriptProgram, Statement};
 use std::ops::Bound::Excluded;
 use std::ops::Bound::Unbounded;
 
@@ -10,6 +10,9 @@ pub trait VmHost {
     fn play_sound(&mut self, filename: &str);
     fn karaoke_set(&mut self, channel: i32, mode: i32);
     fn get_time_ms(&self) -> u64;
+    fn get_time_units(&self) -> i32 {
+        (self.get_time_ms() / 33) as i32
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,6 +27,7 @@ pub enum VmState {
     Ready,
     Running,
     WaitingForKey { target_var: u8 },
+    WaitingForDelay { until_time: i32 },
     Finished,
     PausedForAlert(UnrecognizedInstruction),
     Error(String),
@@ -157,7 +161,7 @@ impl VcdScriptVm {
                 self.state = VmState::WaitingForKey { target_var };
             }
             Statement::CallTime(target_var) => {
-                let time_val = host.get_time_ms() as i32;
+                let time_val = host.get_time_units();
                 self.set_variable(target_var, time_val);
                 self.pc = next_pc;
                 self.state = VmState::Running;
@@ -232,6 +236,29 @@ impl VcdScriptVm {
                 };
 
                 if cond_met {
+                    // Check if this is a delay wait loop:
+                    // e.g. `IF Y < X THEN GOTO 1802` where target line has `CALL TIME(...)`
+                    if op == CondOp::Lt {
+                        if let Statement::Goto(ref target_expr) = *stmt {
+                            let target_line = target_expr.eval(&self.variables) as u32;
+                            if target_line <= line_no {
+                                if let Some(target_stmts) = self.program.lines.get(&target_line) {
+                                    let is_time_loop = target_stmts
+                                        .iter()
+                                        .any(|s| matches!(s, Statement::CallTime(_)));
+                                    if is_time_loop {
+                                        if let Expr::Var(lhs_var) = lhs {
+                                            self.set_variable(lhs_var, r);
+                                        }
+                                        self.pc = next_pc;
+                                        self.state = VmState::WaitingForDelay { until_time: r };
+                                        return self.state.clone();
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     self.execute_sub_statement(*stmt, next_pc, host);
                 } else {
                     self.pc = next_pc;
@@ -353,8 +380,16 @@ impl VcdScriptVm {
         }
     }
 
-    /// Runs until the VM yields (waiting for key, paused for alert, error, or finished).
+    /// Runs until the VM yields (waiting for key, waiting for delay, paused for alert, error, or finished).
     pub fn run_until_yield(&mut self, host: &mut dyn VmHost) -> VmState {
+        if let VmState::WaitingForDelay { until_time } = self.state {
+            if host.get_time_units() < until_time {
+                return self.state.clone();
+            } else {
+                self.state = VmState::Running;
+            }
+        }
+
         const MAX_STEPS_PER_TICK: usize = 100_000;
         let mut steps = 0;
 
@@ -363,6 +398,7 @@ impl VcdScriptVm {
             let res = self.step(host);
             match res {
                 VmState::WaitingForKey { .. }
+                | VmState::WaitingForDelay { .. }
                 | VmState::PausedForAlert(_)
                 | VmState::Finished
                 | VmState::Error(_) => return res,

@@ -246,13 +246,17 @@ impl VcdKernel {
         state
     }
 
+    pub fn is_vm_active(&self) -> bool {
+        matches!(
+            self.vm.state,
+            VmState::Running | VmState::WaitingForDelay { .. }
+        )
+    }
+
     pub fn hit_test(&self, x: i32, y: i32) -> Option<&MapArea> {
         let doc = self.current_page.as_ref()?;
         for area in doc.get_all_hotspots() {
-            let min_x = area.x1.min(area.x2);
-            let max_x = area.x1.max(area.x2);
-            let min_y = area.y1.min(area.y2);
-            let max_y = area.y1.max(area.y2);
+            let (min_x, min_y, max_x, max_y) = area.effective_bounds();
 
             if x >= min_x && x <= max_x && y >= min_y && y <= max_y {
                 return Some(area);
@@ -279,19 +283,29 @@ impl VcdKernel {
     }
 
     pub fn inject_remote_key(&mut self, key_code: i32) -> VmState {
-        let mut host = KernelHost {
-            disc_root: &self.disc_root,
-            canvas: &mut self.canvas,
-            cursor_pos: &mut self.cursor_pos,
-            audio: &mut self.audio,
-            sprite_cache: &mut self.sprite_cache,
-            start_time: self.start_time,
-        };
-        let state = self.vm.inject_key(key_code, &mut host);
-        if let VmState::PausedForAlert(ref alert) = state {
-            self.active_alert = Some(alert.clone());
+        if matches!(self.vm.state, VmState::WaitingForKey { .. }) {
+            let mut host = KernelHost {
+                disc_root: &self.disc_root,
+                canvas: &mut self.canvas,
+                cursor_pos: &mut self.cursor_pos,
+                audio: &mut self.audio,
+                sprite_cache: &mut self.sprite_cache,
+                start_time: self.start_time,
+            };
+            let state = self.vm.inject_key(key_code, &mut host);
+            if let VmState::PausedForAlert(ref alert) = state {
+                self.active_alert = Some(alert.clone());
+            }
+            if matches!(state, VmState::Finished) && key_code == 32 {
+                let _ = self.go_back_or_home();
+            }
+            state
+        } else {
+            if key_code == 32 {
+                let _ = self.go_back_or_home();
+            }
+            self.vm.state.clone()
         }
-        state
     }
 
     pub fn skip_alert_and_continue(&mut self) -> VmState {
@@ -343,6 +357,24 @@ impl VcdKernel {
             "HOMEPAGE.CHM"
         };
         self.load_page(home_target, true)
+    }
+
+    pub fn go_back_or_home(&mut self) -> Result<bool, KernelError> {
+        if self.go_back()? {
+            Ok(true)
+        } else {
+            let home_target = if self.find_file("HOME.CHM").is_some() {
+                "HOME.CHM"
+            } else {
+                "HOMEPAGE.CHM"
+            };
+            if !self.current_page_name.eq_ignore_ascii_case(home_target) {
+                self.load_page(home_target, true)?;
+                Ok(true)
+            } else {
+                Ok(false)
+            }
+        }
     }
 }
 

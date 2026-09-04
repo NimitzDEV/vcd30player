@@ -123,3 +123,49 @@ fn test_kernel_navigation_to_subpages() {
     kernel.go_home().expect("Failed to go home");
     assert_eq!(kernel.current_page_name, "HOME.CHM");
 }
+
+#[test]
+fn test_ok_help1_polygon_hotspot_navigation() {
+    let disc_path = PathBuf::from(DISC_ROOT);
+    if !disc_path.exists() {
+        return;
+    }
+
+    let mut kernel = VcdKernel::new();
+    kernel.open_disc(disc_path).unwrap();
+
+    // Load OK_HELP1.CHM
+    kernel.load_page("OK_HELP1.CHM", true).unwrap();
+    assert_eq!(kernel.current_page_name, "OK_HELP1.CHM");
+
+    // Check hotspots on OK_HELP1.CHM
+    let hotspots = kernel.current_page.as_ref().unwrap().get_all_hotspots();
+    assert_eq!(hotspots.len(), 1, "OK_HELP1.CHM should have 1 hotspot");
+    let area = hotspots[0];
+    assert_eq!(
+        area.target, "OK_HELP2.CHM",
+        "Target link of polygon hotspot in OK_HELP1.CHM must be OK_HELP2.CHM"
+    );
+
+    // Hit test at bottom-right corner triangle button:
+    // Vertices are (311, 253), (328, 253), (320, 266)
+    let hit = kernel.hit_test(320, 260);
+    assert!(hit.is_some(), "Should hit bottom-right corner button at (320, 260)");
+    let hit_area = hit.unwrap().clone();
+    assert_eq!(hit_area.target, "OK_HELP2.CHM");
+
+    // Click the button -> navigates to OK_HELP2.CHM
+    let activated = kernel.activate_hotspot(&hit_area).unwrap();
+    assert!(activated, "Clicking hotspot should successfully trigger navigation");
+    assert_eq!(kernel.current_page_name, "OK_HELP2.CHM");
+
+    // In OK_HELP2.CHM, clicking bottom-right button navigates to HOME.CHM
+    let hit2 = kernel.hit_test(320, 260);
+    assert!(hit2.is_some(), "Should hit bottom-right button in OK_HELP2.CHM");
+    let hit_area2 = hit2.unwrap().clone();
+    assert_eq!(hit_area2.target, "HOME.CHM");
+
+    let activated2 = kernel.activate_hotspot(&hit_area2).unwrap();
+    assert!(activated2);
+    assert_eq!(kernel.current_page_name, "HOME.CHM");
+}

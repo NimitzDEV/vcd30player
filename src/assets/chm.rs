@@ -261,16 +261,47 @@ impl CompHtmlDoc {
                     let map_name = extract_null_terminated_str(&c_data[..32.min(c_data.len())]);
                     let mut areas = Vec::new();
 
-                    if c_data.len() >= 0x140 {
-                        let _num_areas =
-                            u32::from_be_bytes(c_data[0x124..0x128].try_into().unwrap());
-                        // Hotspot area bounding boxes at offset 0x128..0x140
+                    if c_data.len() >= 0x12c + 16 {
+                        let num_points =
+                            u32::from_be_bytes(c_data[0x124..0x128].try_into().unwrap()) as usize;
                         let area_id = u32::from_be_bytes(c_data[0x128..0x12c].try_into().unwrap());
-                        let x1 = i32::from_be_bytes(c_data[0x12c..0x130].try_into().unwrap());
-                        let y1 = i32::from_be_bytes(c_data[0x130..0x134].try_into().unwrap());
-                        let x2 = i32::from_be_bytes(c_data[0x134..0x138].try_into().unwrap());
-                        let y2 = i32::from_be_bytes(c_data[0x138..0x13c].try_into().unwrap());
-                        let target = extract_null_terminated_str(&c_data[0x13c..]);
+
+                        let num_pts = num_points.max(2).min(32);
+                        let target_off = 0x12c + num_pts * 8;
+
+                        let mut min_x = i32::MAX;
+                        let mut min_y = i32::MAX;
+                        let mut max_x = i32::MIN;
+                        let mut max_y = i32::MIN;
+
+                        for i in 0..num_pts {
+                            let p_off = 0x12c + i * 8;
+                            if p_off + 8 <= c_data.len() {
+                                let x = i32::from_be_bytes(c_data[p_off..p_off + 4].try_into().unwrap());
+                                let y = i32::from_be_bytes(c_data[p_off + 4..p_off + 8].try_into().unwrap());
+                                min_x = min_x.min(x);
+                                max_x = max_x.max(x);
+                                min_y = min_y.min(y);
+                                max_y = max_y.max(y);
+                            }
+                        }
+
+                        if min_x == i32::MAX {
+                            min_x = 0;
+                            max_x = 0;
+                            min_y = 0;
+                            max_y = 0;
+                        }
+
+                        let raw_target = if target_off < c_data.len() {
+                            extract_null_terminated_str(&c_data[target_off..])
+                        } else {
+                            String::new()
+                        };
+                        let target = raw_target
+                            .trim()
+                            .trim_matches(|c: char| c.is_control() || c == '\0')
+                            .to_string();
 
                         // Check offset 100 (0x64) for VCDSCRIPT target line number (e.g. "100", "150", "200")
                         let script_entry_line = if c_data.len() > 100 {
@@ -282,10 +313,10 @@ impl CompHtmlDoc {
 
                         areas.push(MapArea {
                             area_id,
-                            x1,
-                            y1,
-                            x2,
-                            y2,
+                            x1: min_x,
+                            y1: min_y,
+                            x2: max_x,
+                            y2: max_y,
                             target,
                             script_entry_line,
                         });

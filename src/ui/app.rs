@@ -747,11 +747,16 @@ impl eframe::App for VcdPlayerApp {
                     // Handle click on hotspot
                     if response.clicked() {
                         if let Some(area) = current_hit_area {
+                            let is_wav = area.target.trim().to_uppercase().ends_with(".WAV");
                             match self.kernel.activate_hotspot(&area) {
                                 Ok(true) => {
-                                    self.status_message = format!("已跳转至: {}", area.target);
-                                    self.texture = None;
-                                    self.texture_dirty = true;
+                                    if is_wav {
+                                        self.status_message = format!("播放音频: {}", area.target);
+                                    } else {
+                                        self.status_message = format!("已跳转至: {}", area.target);
+                                        self.texture = None;
+                                        self.texture_dirty = true;
+                                    }
                                     ctx.request_repaint();
                                 }
                                 Ok(false) => {

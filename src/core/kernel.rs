@@ -235,19 +235,22 @@ impl VcdKernel {
             }
         }
 
+        // Stop any one-shot sound effect on page transition
+        self.audio.stop_sound();
+
         // BGSOUND handling
         let mut bg_sound = None;
         for chunk in &doc.chunks {
-            if let ChunkPayload::BgSound(snd) = chunk {
-                if !snd.is_empty() {
-                    bg_sound = Some(snd.clone());
+            if let ChunkPayload::BgSound { filename, loop_count } = chunk {
+                if !filename.is_empty() {
+                    bg_sound = Some((filename.clone(), *loop_count));
                     break;
                 }
             }
         }
-        if let Some(snd_name) = bg_sound {
+        if let Some((snd_name, loop_count)) = bg_sound {
             if let Some(snd_path) = self.find_file(&snd_name) {
-                self.audio.play_bgm_file(snd_path);
+                self.audio.play_bgm_file(snd_path, loop_count);
             }
         } else {
             self.audio.stop_bgm();
@@ -284,7 +287,7 @@ impl VcdKernel {
         let bytes = std::fs::read(&video_path)
             .map_err(|e| KernelError::ChmParseError(format!("Failed to read video file: {}", e)))?;
 
-        self.audio.stop_bgm();
+        self.audio.stop_all();
         let sink = self.audio.create_video_sink();
         let player = VideoPlayer::new(
             &bytes,
@@ -310,14 +313,9 @@ impl VcdKernel {
             } else {
                 // Resume current page BGSOUND if present
                 if let Some(ref doc) = self.current_page {
-                    for chunk in &doc.chunks {
-                        if let ChunkPayload::BgSound(snd) = chunk {
-                            if !snd.is_empty() {
-                                if let Some(p) = self.find_file(snd) {
-                                    self.audio.play_bgm_file(p);
-                                }
-                                break;
-                            }
+                    if let Some((snd, loop_count)) = doc.get_background_sound_info() {
+                        if let Some(p) = self.find_file(snd) {
+                            self.audio.play_bgm_file(p, loop_count);
                         }
                     }
                 }
@@ -434,10 +432,20 @@ impl VcdKernel {
 
         if target.to_uppercase().ends_with(".CHM") && target != ".CHM" {
             self.load_page(target, true)?;
-            Ok(true)
-        } else {
-            Ok(false)
+            return Ok(true);
         }
+
+        if target.to_uppercase().ends_with(".WAV") {
+            if let Some(wav_path) = self.find_file(target) {
+                // When activating a WAV hotspot (e.g. instrument audio demo),
+                // stop background narration/BGM so the user can clearly hear the sound sample.
+                self.audio.stop_bgm();
+                self.audio.play_sound_file(wav_path);
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
     }
 
     pub fn inject_remote_key(&mut self, key_code: i32) -> VmState {

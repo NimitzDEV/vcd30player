@@ -113,7 +113,10 @@ pub enum ChunkPayload {
         map_name: String,
         areas: Vec<MapArea>,
     },
-    BgSound(String),
+    BgSound {
+        filename: String,
+        loop_count: u32,
+    },
     VcdScript(String),
     Raw {
         chunk_type: u32,
@@ -337,20 +340,39 @@ impl CompHtmlDoc {
                     ChunkPayload::MapHotspots { map_name, areas }
                 }
                 CHUNK_TYPE_BGSOUND => {
-                    let mut snd = String::new();
-                    for try_off in [0x00, 0x08, 0x10, 0x20] {
-                        if try_off < c_data.len() {
-                            let s = extract_null_terminated_str(&c_data[try_off..]);
-                            if s.to_uppercase().ends_with(".WAV") {
-                                snd = s;
-                                break;
+                    let (loop_count, snd) = if c_data.len() >= 8 {
+                        let loop_cnt = u32::from_be_bytes(c_data[0..4].try_into().unwrap());
+                        let name_len = u32::from_be_bytes(c_data[4..8].try_into().unwrap()) as usize;
+                        let s = if 8 + name_len <= c_data.len() {
+                            extract_null_terminated_str(&c_data[8..8 + name_len])
+                        } else {
+                            extract_null_terminated_str(&c_data[8..])
+                        };
+                        (loop_cnt, s)
+                    } else {
+                        let mut snd = String::new();
+                        for try_off in [0x00, 0x08, 0x10, 0x20] {
+                            if try_off < c_data.len() {
+                                let s = extract_null_terminated_str(&c_data[try_off..]);
+                                if s.to_uppercase().ends_with(".WAV") {
+                                    snd = s;
+                                    break;
+                                }
                             }
                         }
+                        if snd.is_empty() {
+                            snd = extract_null_terminated_str(c_data);
+                        }
+                        (1, snd)
+                    };
+                    let filename = snd
+                        .trim()
+                        .trim_matches(|c: char| c.is_control() || c == '\0')
+                        .to_string();
+                    ChunkPayload::BgSound {
+                        filename,
+                        loop_count,
                     }
-                    if snd.is_empty() {
-                        snd = extract_null_terminated_str(c_data);
-                    }
-                    ChunkPayload::BgSound(snd)
                 }
                 CHUNK_TYPE_VCDSCRIPT => {
                     // In VCDSCRIPT chunk:
@@ -409,9 +431,21 @@ impl CompHtmlDoc {
     /// Finds any background sound from BGSOUND chunks.
     pub fn get_background_sound(&self) -> Option<&str> {
         for chunk in &self.chunks {
-            if let ChunkPayload::BgSound(snd) = chunk {
-                if !snd.is_empty() {
-                    return Some(snd);
+            if let ChunkPayload::BgSound { filename, .. } = chunk {
+                if !filename.is_empty() {
+                    return Some(filename.as_str());
+                }
+            }
+        }
+        None
+    }
+
+    /// Finds any background sound and loop count from BGSOUND chunks.
+    pub fn get_background_sound_info(&self) -> Option<(&str, u32)> {
+        for chunk in &self.chunks {
+            if let ChunkPayload::BgSound { filename, loop_count } = chunk {
+                if !filename.is_empty() {
+                    return Some((filename.as_str(), *loop_count));
                 }
             }
         }

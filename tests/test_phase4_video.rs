@@ -34,6 +34,12 @@ fn test_cdxa_extraction_and_decoder_metadata() {
     // Verify frame contains non-black content (not all zeros)
     let non_zero_count = rgba.iter().filter(|&&b| b > 0).count();
     assert!(non_zero_count > 1000, "Decoded frame should contain visible pixel data");
+    // Verify alpha is 255 for all pixels (opaque)
+    assert!(
+        rgba.chunks_exact(4).all(|p| p[3] == 255),
+        "Decoded video frame must have alpha = 255 (fully opaque)"
+    );
+
 
     // 4. Audio decoding test
     let audio = decoder.decode_audio_samples();

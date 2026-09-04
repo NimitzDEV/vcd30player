@@ -78,7 +78,11 @@ impl VideoPlayer {
         }
 
         let mut current_frame_rgba = vec![0u8; (width * height * 4) as usize];
+        for pixel in current_frame_rgba.chunks_exact_mut(4) {
+            pixel[3] = 255;
+        }
         let initial_pts = decoder.decode_video_frame(&mut current_frame_rgba).unwrap_or(start_time);
+
 
         Ok(Self {
             decoder,

@@ -135,10 +135,14 @@ impl MpegDecoder {
             unsafe {
                 plm_frame_to_rgba(frame_ptr, rgba_out.as_mut_ptr(), (frame.width * 4) as i32);
             }
+            for pixel in rgba_out[..expected_size].chunks_exact_mut(4) {
+                pixel[3] = 255;
+            }
         }
 
         Some(frame.time)
     }
+
 
     /// Decodes the next audio frame.
     /// Returns the interleaved stereo samples and timestamp if an audio packet was decoded.

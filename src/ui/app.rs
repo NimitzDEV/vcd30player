@@ -161,7 +161,12 @@ impl eframe::App for VcdPlayerApp {
         // Drive video playback or active VM
         if self.kernel.is_video_active() {
             let new_frame = self.kernel.update_video();
-            if new_frame || self.texture_dirty {
+            if !self.kernel.is_video_active() {
+                // Video ended during this update_video call!
+                self.texture = None;
+                self.texture_dirty = true;
+                self.refresh_texture(&ctx);
+            } else if new_frame || self.texture_dirty {
                 self.refresh_video_texture(&ctx);
             }
             ctx.request_repaint();
@@ -171,6 +176,7 @@ impl eframe::App for VcdPlayerApp {
                 if matches!(state, VmState::Finished) {
                     let _ = self.kernel.go_back_or_home();
                 }
+                self.texture = None;
                 self.texture_dirty = true;
                 ctx.request_repaint();
             }
@@ -179,6 +185,7 @@ impl eframe::App for VcdPlayerApp {
                 self.refresh_texture(&ctx);
             }
         }
+
 
         // 1. Top Menu Bar Panel
         egui::Panel::top("top_menu_bar").show(ui, |ui| {
@@ -191,7 +198,9 @@ impl eframe::App for VcdPlayerApp {
                                 self.status_message = format!("打开失败: {}", e);
                             } else {
                                 self.status_message = format!("已打开: {}", folder.display());
+                                self.texture = None;
                                 self.texture_dirty = true;
+                                ctx.request_repaint();
                             }
                         }
                     }
@@ -207,7 +216,9 @@ impl eframe::App for VcdPlayerApp {
                                     self.status_message = format!("加载页面失败: {}", e);
                                 } else {
                                     self.status_message = format!("已加载: {}", name);
+                                    self.texture = None;
                                     self.texture_dirty = true;
+                                    ctx.request_repaint();
                                 }
                             }
                         }
@@ -229,7 +240,9 @@ impl eframe::App for VcdPlayerApp {
                     {
                         ui.close();
                         if let Ok(true) = self.kernel.go_back() {
+                            self.texture = None;
                             self.texture_dirty = true;
+                            ctx.request_repaint();
                         }
                     }
 
@@ -239,17 +252,22 @@ impl eframe::App for VcdPlayerApp {
                     {
                         ui.close();
                         if let Ok(true) = self.kernel.go_forward() {
+                            self.texture = None;
                             self.texture_dirty = true;
+                            ctx.request_repaint();
                         }
                     }
 
                     if ui.button("🏠 主页 (Home)").clicked() {
                         ui.close();
                         if let Ok(()) = self.kernel.go_home() {
+                            self.texture = None;
                             self.texture_dirty = true;
+                            ctx.request_repaint();
                         }
                     }
                 });
+
 
                 ui.menu_button("视图(V)", |ui| {
                     if ui
@@ -327,7 +345,9 @@ impl eframe::App for VcdPlayerApp {
 
                     if stop_video {
                         let _ = self.kernel.stop_video_and_exit();
+                        self.texture = None;
                         self.texture_dirty = true;
+                        ctx.request_repaint();
                     }
                 });
                 ui.separator();
@@ -342,13 +362,17 @@ impl eframe::App for VcdPlayerApp {
                     .clicked()
                 {
                     if let Ok(true) = self.kernel.go_back() {
+                        self.texture = None;
                         self.texture_dirty = true;
+                        ctx.request_repaint();
                     }
                 }
 
                 if ui.button("🏠 主页").clicked() {
                     if let Ok(()) = self.kernel.go_home() {
+                        self.texture = None;
                         self.texture_dirty = true;
+                        ctx.request_repaint();
                     }
                 }
 
@@ -357,9 +381,12 @@ impl eframe::App for VcdPlayerApp {
                     .clicked()
                 {
                     if let Ok(true) = self.kernel.go_forward() {
+                        self.texture = None;
                         self.texture_dirty = true;
+                        ctx.request_repaint();
                     }
                 }
+
 
                 ui.separator();
 
@@ -401,8 +428,11 @@ impl eframe::App for VcdPlayerApp {
                     }
                 } else if i.key_pressed(egui::Key::Escape) || i.key_pressed(egui::Key::Backspace) {
                     let _ = self.kernel.stop_video_and_exit();
+                    self.texture = None;
                     self.texture_dirty = true;
+                    ctx.request_repaint();
                 } else if i.key_pressed(egui::Key::ArrowLeft) {
+
                     if let Some(ref mut player) = self.kernel.active_video {
                         let cur = player.current_time();
                         player.seek(cur - 5.0);
@@ -594,7 +624,7 @@ impl eframe::App for VcdPlayerApp {
                 // Center in panel
                 let offset_x = (avail_size.x - disp_w) * 0.5;
                 let offset_y = (avail_size.y - disp_h) * 0.5;
-                let origin = ui.min_rect().min + Vec2::new(offset_x, offset_y);
+                let origin = ui.max_rect().min + Vec2::new(offset_x, offset_y);
                 let display_rect = Rect::from_min_size(origin, Vec2::new(disp_w, disp_h));
 
                 let painter = ui.painter();
@@ -658,7 +688,9 @@ impl eframe::App for VcdPlayerApp {
                                 self.status_message = format!("打开失败: {}", e);
                             } else {
                                 self.status_message = format!("已打开: {}", folder.display());
+                                self.texture = None;
                                 self.texture_dirty = true;
+                                ctx.request_repaint();
                             }
                         }
                     }
@@ -718,10 +750,13 @@ impl eframe::App for VcdPlayerApp {
                             match self.kernel.activate_hotspot(&area) {
                                 Ok(true) => {
                                     self.status_message = format!("已跳转至: {}", area.target);
+                                    self.texture = None;
                                     self.texture_dirty = true;
+                                    ctx.request_repaint();
                                 }
                                 Ok(false) => {
                                     self.status_message = format!("触发动作: {}", area.target);
+                                    ctx.request_repaint();
                                 }
                                 Err(e) => {
                                     self.status_message = format!("跳转失败: {}", e);
@@ -729,6 +764,7 @@ impl eframe::App for VcdPlayerApp {
                             }
                         }
                     }
+
 
                     // Debug: Draw Hotspots overlays
                     if self.show_hotspots {

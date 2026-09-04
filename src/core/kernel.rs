@@ -118,12 +118,17 @@ pub struct VcdKernel {
 
 impl VcdKernel {
     pub fn new() -> Self {
+        let mut canvas = vec![0u8; (CANVAS_WIDTH * CANVAS_HEIGHT * 4) as usize];
+        for chunk in canvas.chunks_exact_mut(4) {
+            chunk[3] = 255;
+        }
         Self {
             disc_root: PathBuf::new(),
             current_page_name: String::new(),
             current_page: None,
             current_bg_image: None,
-            canvas: vec![0u8; (CANVAS_WIDTH * CANVAS_HEIGHT * 4) as usize],
+            canvas,
+
             history_stack: Vec::new(),
             forward_stack: Vec::new(),
             autorun_config: None,
@@ -173,7 +178,7 @@ impl VcdKernel {
         // If an opening video is configured and exists, start playing it
         if let Some(ref mpeg_name) = opening_video {
             if self.find_file(mpeg_name).is_some() {
-                let _ = self.start_video(mpeg_name, 0, 0, None);
+                let _ = self.start_video(mpeg_name, 0, 0, Some(initial_page.clone()));
             }
         }
 
@@ -202,8 +207,14 @@ impl VcdKernel {
         self.cursor_pos = None;
         self.active_alert = None;
 
-        // Clear canvas with black
-        self.canvas.fill(0);
+        // Clear canvas with opaque black
+        for chunk in self.canvas.chunks_exact_mut(4) {
+            chunk[0] = 0;
+            chunk[1] = 0;
+            chunk[2] = 0;
+            chunk[3] = 255;
+        }
+
 
         // Load background image
         if let Some(bg_name) = doc.get_background_image() {

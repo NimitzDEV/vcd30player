@@ -147,6 +147,58 @@ fn test_yt02_chm_audio_and_wav_hotspot_triggering() {
     kernel.audio.stop_all();
 }
 
+#[test]
+fn test_weight_chm_audio_timing_and_intro_delay() {
+    let disc_path = std::path::Path::new(r"I:\DATA\VCD_DATA");
+    if !disc_path.exists() {
+        println!("Disc I: not mounted, skipping");
+        return;
+    }
+
+    use rodio::Source;
+    let w99_path = disc_path.join("W99.WAV");
+    if w99_path.exists() {
+        let b = std::fs::read(&w99_path).unwrap();
+        let dec = rodio::Decoder::new(std::io::Cursor::new(b)).unwrap();
+        let w99_duration = dec.total_duration().unwrap();
+        // W99.WAV is ~2.185 seconds
+        assert!(w99_duration.as_millis() >= 2100 && w99_duration.as_millis() <= 2300);
+    }
+
+    let weight_chm_path = disc_path.join("WEIGHT.CHM");
+    if weight_chm_path.exists() {
+        use vcd30_player::core::kernel::VcdKernel;
+        use vcd30_player::core::script_vm::VmState;
+
+        let mut kernel = VcdKernel::new();
+        kernel.open_disc(std::path::PathBuf::from(r"I:\")).unwrap();
+        kernel.load_page("WEIGHT.CHM", false).unwrap();
+
+        // 1. Initially yields WaitingForDelay for 30 units (3000ms)
+        assert!(matches!(kernel.vm.state, VmState::WaitingForDelay { .. }));
+
+        // 2. Fast forward 2.3 seconds (greater than W99.WAV 2.185s duration, but under 3.0s intro delay)
+        // With the 100ms/unit fix, VM MUST STILL BE IN WaitingForDelay (ensures W99.WAV finishes completely!)
+        kernel.start_time = std::time::Instant::now() - std::time::Duration::from_millis(2300);
+        let state_mid = kernel.run_vm();
+        assert!(
+            matches!(state_mid, VmState::WaitingForDelay { .. }),
+            "At 2.3s, W99.WAV has finished playing and VM should still wait for 3.0s delay to complete!"
+        );
+
+        // 3. Fast forward past 3.0 seconds (e.g. 3.5s) -> VM should advance to gender prompt
+        kernel.start_time = std::time::Instant::now() - std::time::Duration::from_millis(3500);
+        let state_end = kernel.run_vm();
+        assert!(
+            matches!(state_end, VmState::WaitingForKey { target_var: b'X' }),
+            "At 3.5s, delay completed, W08.WAV triggered, waiting for gender selection (Key X)!"
+        );
+    }
+}
+
+
+
+
 
 
 

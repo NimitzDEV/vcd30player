@@ -11,8 +11,10 @@ pub trait VmHost {
     fn play_video(&mut self, filename: &str, start_frame: i32, end_frame: i32, exit_page: Option<&str>);
     fn karaoke_set(&mut self, channel: i32, mode: i32);
     fn get_time_ms(&self) -> u64;
+    /// Returns time in 0.1-second (100ms) units, exactly matching original
+    /// AUTORUN.EXE (0x40d2b7: CRT time_t * 10 % 65535, i.e. 1 unit = 100ms).
     fn get_time_units(&self) -> i32 {
-        (self.get_time_ms() / 33) as i32
+        (self.get_time_ms() / 100) as i32
     }
 }
 

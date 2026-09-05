@@ -63,11 +63,11 @@ fn test_kernel_weight_interactive_script_and_remote_keys() {
     kernel.load_page("WEIGHT.CHM", true).unwrap();
     assert_eq!(kernel.current_page_name, "WEIGHT.CHM");
 
-    // Initially lines 6-8 yields WaitingForDelay for 30 frames (intro delay)
+    // Initially lines 6-8 yields WaitingForDelay for 30 units (3.0s intro delay)
     assert!(matches!(kernel.vm.state, VmState::WaitingForDelay { .. }));
 
-    // Fast-forward past the 30-frame intro delay
-    kernel.start_time = std::time::Instant::now() - std::time::Duration::from_secs(2);
+    // Fast-forward past the 30-unit (3.0s) intro delay
+    kernel.start_time = std::time::Instant::now() - std::time::Duration::from_secs(4);
     let state = kernel.run_vm();
 
     // Should stop at line 50: CALL IRKEY(X) waiting for input

@@ -178,13 +178,13 @@ fn test_vm_time_delay_loop_yielding() {
     assert_eq!(state, VmState::WaitingForDelay { until_time: 50 });
     assert_eq!(vm.get_variable(b'A'), 0);
 
-    // If time has not elapsed yet (1000ms / 33 = 30 < 50)
-    host.time_ms = 1000;
+    // If time has not elapsed yet (2000ms / 100 = 20 < 50)
+    host.time_ms = 2000;
     let state2 = vm.run_until_yield(&mut host);
     assert_eq!(state2, VmState::WaitingForDelay { until_time: 50 });
 
-    // When time elapses (2000ms / 33 = 60 >= 50)
-    host.time_ms = 2000;
+    // When time elapses (5000ms / 100 = 50 >= 50)
+    host.time_ms = 5000;
     let state3 = vm.run_until_yield(&mut host);
     assert_eq!(state3, VmState::Finished);
     assert_eq!(vm.get_variable(b'A'), 999);

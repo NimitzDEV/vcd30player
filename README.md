@@ -114,7 +114,9 @@ VCD_TEST_DISC="/media/cdrom" cargo test
 ```text
 vcd30player/
 ├── .github/
-│   └── workflows/ci.yml   # GitHub Actions 自动化持续集成
+│   ├── workflows/
+│   │   ├── ci.yml         # 自动化持续集成与测试
+│   │   └── release.yml    # Tag 触发多平台二进制自动编译与发布
 ├── c_src/                 # C 桥接代码（pl_mpeg_impl.c）
 ├── vendor/
 │   └── pl_mpeg/           # Git Submodule（官方 phoboslab/pl_mpeg）

@@ -114,7 +114,9 @@ VCD_TEST_DISC="/media/cdrom" cargo test
 ```text
 vcd30player/
 ├── .github/
-│   └── workflows/ci.yml   # Automated continuous integration
+│   ├── workflows/
+│   │   ├── ci.yml         # Automated continuous integration and test
+│   │   └── release.yml    # Automated multi-platform release binary packaging
 ├── c_src/                 # C bridge code (pl_mpeg_impl.c)
 ├── vendor/
 │   └── pl_mpeg/           # Git Submodule (upstream phoboslab/pl_mpeg)

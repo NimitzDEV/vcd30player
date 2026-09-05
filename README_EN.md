@@ -57,7 +57,8 @@ Original 16/32-bit executables cannot run natively on modern 64-bit platforms (W
 ### Build from Source
 
 ```bash
-git clone https://github.com/your-username/vcd30player.git
+# Clone repository with submodules
+git clone --recurse-submodules https://github.com/your-username/vcd30player.git
 cd vcd30player
 
 # Build debug binary
@@ -108,7 +109,9 @@ VCD_TEST_DISC="/media/cdrom" cargo test
 
 ```text
 vcd30player/
-├── c_src/                 # C dependencies (pl_mpeg wrapper)
+├── c_src/                 # C bridge code (pl_mpeg_impl.c)
+├── vendor/
+│   └── pl_mpeg/           # Git Submodule (upstream phoboslab/pl_mpeg)
 ├── src/
 │   ├── assets/            # CHM, YBM, CLS format decoders
 │   ├── audio/             # Audio mixer and sound effect player

@@ -57,8 +57,8 @@ VCD 3.0 是在传统 VCD 视频播放的基础上，增加了基于页面的菜�
 ### 编译构建
 
 ```bash
-# 克隆仓库
-git clone https://github.com/your-username/vcd30player.git
+# 克隆仓库（包含 submodule）
+git clone --recurse-submodules https://github.com/your-username/vcd30player.git
 cd vcd30player
 
 # 编译 Debug 版本
@@ -109,7 +109,9 @@ VCD_TEST_DISC="/media/cdrom" cargo test
 
 ```text
 vcd30player/
-├── c_src/                 # C 依赖代码（pl_mpeg 解码器封装）
+├── c_src/                 # C 桥接代码（pl_mpeg_impl.c）
+├── vendor/
+│   └── pl_mpeg/           # Git Submodule（官方 phoboslab/pl_mpeg）
 ├── src/
 │   ├── assets/            # CHM、YBM、CLS 格式解析器
 │   ├── audio/             # 音频管理器与混音播放

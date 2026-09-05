@@ -5,4 +5,4 @@
 #include <stdint.h>
 
 #define PL_MPEG_IMPLEMENTATION
-#include "pl_mpeg.h"
+#include "../vendor/pl_mpeg/pl_mpeg.h"

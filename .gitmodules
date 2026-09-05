@@ -1,0 +1,3 @@
+[submodule "vendor/pl_mpeg"]
+	path = vendor/pl_mpeg
+	url = https://github.com/phoboslab/pl_mpeg.git

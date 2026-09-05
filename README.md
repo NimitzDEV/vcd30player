@@ -131,6 +131,8 @@ vcd30player/
 │   ├── fixtures/          # 300KB 测试专用虚拟光盘样本
 │   └── *.rs               # 完整测试套件
 ├── Cargo.toml
+├── CHANGELOG.md           # 版本更新日志
+├── CONTRIBUTING.md        # 贡献指南
 ├── LICENSE-APACHE
 ├── LICENSE-MIT
 ├── README.md              # 中文说明

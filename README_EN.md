@@ -131,6 +131,8 @@ vcd30player/
 │   ├── fixtures/          # Curated, copyright-clean mock disc fixtures
 │   └── *.rs               # Phase 1 to Phase 4 integration tests
 ├── Cargo.toml
+├── CHANGELOG.md           # Version changelog
+├── CONTRIBUTING.md        # Contribution guidelines
 ├── LICENSE-APACHE
 ├── LICENSE-MIT
 ├── README.md              # Chinese Documentation

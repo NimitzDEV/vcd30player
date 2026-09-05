@@ -1,1 +1,26 @@
+# Rust build artifacts
 /target
+**/*.rs.bk
+cargo-timing*.html
+
+# IDE & Editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*.iml
+*.sublime-workspace
+*.sublime-project
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# Environment / local settings
+*.local

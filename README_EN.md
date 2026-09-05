@@ -1,5 +1,6 @@
 # vcd30player
 
+[![CI](https://github.com/NimitzDEV/vcd30player/actions/workflows/ci.yml/badge.svg)](https://github.com/NimitzDEV/vcd30player/actions/workflows/ci.yml)
 [![Rust](https://img.shields.io/badge/Language-Rust_2024_Edition-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 [![Tests](https://img.shields.io/badge/Tests-47%20Passed-brightgreen.svg)](#testing)
@@ -58,8 +59,11 @@ Original 16/32-bit executables cannot run natively on modern 64-bit platforms (W
 
 ```bash
 # Clone repository with submodules
-git clone --recurse-submodules https://github.com/your-username/vcd30player.git
+git clone --recurse-submodules https://github.com/NimitzDEV/vcd30player.git
 cd vcd30player
+
+# If cloned without --recurse-submodules, initialize them manually:
+git submodule update --init --recursive
 
 # Build debug binary
 cargo build
@@ -109,6 +113,8 @@ VCD_TEST_DISC="/media/cdrom" cargo test
 
 ```text
 vcd30player/
+├── .github/
+│   └── workflows/ci.yml   # Automated continuous integration
 ├── c_src/                 # C bridge code (pl_mpeg_impl.c)
 ├── vendor/
 │   └── pl_mpeg/           # Git Submodule (upstream phoboslab/pl_mpeg)
@@ -125,9 +131,19 @@ vcd30player/
 │   ├── fixtures/          # Curated, copyright-clean mock disc fixtures
 │   └── *.rs               # Phase 1 to Phase 4 integration tests
 ├── Cargo.toml
+├── LICENSE-APACHE
+├── LICENSE-MIT
 ├── README.md              # Chinese Documentation
 └── README_EN.md           # English Documentation
 ```
+
+---
+
+## ⚠️ Disclaimer
+
+This project is intended strictly as an interactive media player and compatibility runtime for VCD 3.0 format discs:
+- This repository does not contain or distribute any copyrighted commercial disc content (such as movies, music, or video games).
+- Users are expected to supply their own lawfully acquired discs or legitimate backups when using this software.
 
 ---
 

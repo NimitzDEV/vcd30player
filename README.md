@@ -1,5 +1,6 @@
 # vcd30player
 
+[![CI](https://github.com/NimitzDEV/vcd30player/actions/workflows/ci.yml/badge.svg)](https://github.com/NimitzDEV/vcd30player/actions/workflows/ci.yml)
 [![Rust](https://img.shields.io/badge/Language-Rust_2024_Edition-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](#开源协议)
 [![Tests](https://img.shields.io/badge/Tests-47%20Passed-brightgreen.svg)](#测试指南)
@@ -58,8 +59,11 @@ VCD 3.0 是在传统 VCD 视频播放的基础上，增加了基于页面的菜�
 
 ```bash
 # 克隆仓库（包含 submodule）
-git clone --recurse-submodules https://github.com/your-username/vcd30player.git
+git clone --recurse-submodules https://github.com/NimitzDEV/vcd30player.git
 cd vcd30player
+
+# 若克隆时未添加 --recurse-submodules，可执行以下命令拉取子模块：
+git submodule update --init --recursive
 
 # 编译 Debug 版本
 cargo build
@@ -109,6 +113,8 @@ VCD_TEST_DISC="/media/cdrom" cargo test
 
 ```text
 vcd30player/
+├── .github/
+│   └── workflows/ci.yml   # GitHub Actions 自动化持续集成
 ├── c_src/                 # C 桥接代码（pl_mpeg_impl.c）
 ├── vendor/
 │   └── pl_mpeg/           # Git Submodule（官方 phoboslab/pl_mpeg）
@@ -125,9 +131,19 @@ vcd30player/
 │   ├── fixtures/          # 300KB 测试专用虚拟光盘样本
 │   └── *.rs               # 完整测试套件
 ├── Cargo.toml
+├── LICENSE-APACHE
+├── LICENSE-MIT
 ├── README.md              # 中文说明
 └── README_EN.md           # English Documentation
 ```
+
+---
+
+## ⚠️ 免责声明
+
+本项目仅作为 VCD 3.0 格式光盘的播放与学习研究工具：
+- 本项目代码仓库不包含、亦不分发任何受版权保护的商业影视、音乐或游戏等光盘原盘媒体内容。
+- 用户使用本播放器时，请确保使用的是您合法拥有的光盘介质或合法备份副本。
 
 ---
 

@@ -1,13 +1,13 @@
-use std::path::Path;
+mod common;
+
 use vcd30_player::assets::chm::CompHtmlDoc;
 use vcd30_player::assets::cls::AutoRunConfig;
 use vcd30_player::assets::ybm::YbmImage;
 
-const DISC_ROOT: &str = r"I:\";
-
 #[test]
 fn test_decode_cover_ybm() {
-    let path = Path::new(DISC_ROOT)
+    let disc_root = common::get_test_disc_root();
+    let path = disc_root
         .join("PROGRAM")
         .join("JAVA")
         .join("COVER.YBM");
@@ -54,7 +54,8 @@ fn test_decode_cover_ybm() {
 
 #[test]
 fn test_decode_ssun_and_stamp_ybm() {
-    let data_dir = Path::new(DISC_ROOT).join("DATA").join("VCD_DATA");
+    let disc_root = common::get_test_disc_root();
+    let data_dir = disc_root.join("DATA").join("VCD_DATA");
     if !data_dir.exists() {
         return;
     }
@@ -83,8 +84,9 @@ fn test_decode_ssun_and_stamp_ybm() {
 
 #[test]
 fn test_canvas_blitting() {
+    let disc_root = common::get_test_disc_root();
     let mut canvas = vec![0u8; 352 * 288 * 4];
-    let data_dir = Path::new(DISC_ROOT).join("DATA").join("VCD_DATA");
+    let data_dir = disc_root.join("DATA").join("VCD_DATA");
     if !data_dir.exists() {
         return;
     }
@@ -103,7 +105,8 @@ fn test_canvas_blitting() {
 
 #[test]
 fn test_parse_chm_homepage() {
-    let p = Path::new(DISC_ROOT)
+    let disc_root = common::get_test_disc_root();
+    let p = disc_root
         .join("DATA")
         .join("VCD_DATA")
         .join("HOMEPAGE.CHM");
@@ -131,7 +134,8 @@ fn test_parse_chm_homepage() {
 
 #[test]
 fn test_parse_chm_with_vcdscript() {
-    let data_dir = Path::new(DISC_ROOT).join("DATA").join("VCD_DATA");
+    let disc_root = common::get_test_disc_root();
+    let data_dir = disc_root.join("DATA").join("VCD_DATA");
     if !data_dir.exists() {
         return;
     }
@@ -142,10 +146,6 @@ fn test_parse_chm_with_vcdscript() {
         let bytes = std::fs::read(&tb_path).unwrap();
         let doc = CompHtmlDoc::parse(&bytes).unwrap();
         let script = doc.get_script().expect("T_B.CHM must have VCDSCRIPT");
-        println!("T_B hotspots:");
-        for h in doc.get_all_hotspots() {
-            println!("  area {}: ({},{})-({},{}) target='{}'", h.area_id, h.x1, h.y1, h.x2, h.y2, h.target);
-        }
         assert!(script.contains("KARAOKE SET"));
         assert!(script.contains("DRAWIMAGE"));
         assert!(script.contains("GOSUB"));
@@ -157,10 +157,6 @@ fn test_parse_chm_with_vcdscript() {
         let bytes = std::fs::read(&weight_path).unwrap();
         let doc = CompHtmlDoc::parse(&bytes).unwrap();
         let script = doc.get_script().expect("WEIGHT.CHM must have VCDSCRIPT");
-        println!("WEIGHT hotspots:");
-        for h in doc.get_all_hotspots() {
-            println!("  area {}: ({},{})-({},{}) target='{}'", h.area_id, h.x1, h.y1, h.x2, h.y2, h.target);
-        }
         assert!(script.contains("CALL IRKEY"));
         assert!(script.contains("DRAWCURSOR"));
         assert!(script.contains("PLAYSOUND"));
@@ -169,7 +165,8 @@ fn test_parse_chm_with_vcdscript() {
 
 #[test]
 fn test_batch_parse_all_disc_chms() {
-    let data_dir = Path::new(DISC_ROOT).join("DATA").join("VCD_DATA");
+    let disc_root = common::get_test_disc_root();
+    let data_dir = disc_root.join("DATA").join("VCD_DATA");
     if !data_dir.exists() {
         return;
     }
@@ -191,17 +188,18 @@ fn test_batch_parse_all_disc_chms() {
             count += 1;
         }
     }
-    println!("Successfully parsed {} CHM files on disc!", count);
+    println!("Successfully parsed {} CHM files on test disc!", count);
     assert!(
-        count > 50,
-        "Expected at least 50 CHM files on disc, found {}",
+        count >= 10,
+        "Expected at least 10 CHM files on disc, found {}",
         count
     );
 }
 
 #[test]
 fn test_parse_autorun_cls() {
-    let p = Path::new(DISC_ROOT)
+    let disc_root = common::get_test_disc_root();
+    let p = disc_root
         .join("PROGRAM")
         .join("JAVA")
         .join("AUTORUN.CLS");

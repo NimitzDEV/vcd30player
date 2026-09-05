@@ -1,4 +1,5 @@
-use std::path::Path;
+mod common;
+
 use vcd30_player::assets::chm::CompHtmlDoc;
 use vcd30_player::core::script_ast::ScriptProgram;
 use vcd30_player::core::script_vm::{VcdScriptVm, VmHost, VmState};
@@ -115,7 +116,7 @@ fn test_vm_call_irkey_waiting_and_inject() {
 
 #[test]
 fn test_vm_tb_script_execution() {
-    let data_dir = Path::new(r"I:\DATA\VCD_DATA");
+    let data_dir = common::get_test_disc_root().join("DATA").join("VCD_DATA");
     if !data_dir.exists() {
         return;
     }

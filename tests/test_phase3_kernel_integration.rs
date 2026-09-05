@@ -1,17 +1,11 @@
-use std::path::PathBuf;
+mod common;
+
 use vcd30_player::core::kernel::VcdKernel;
 use vcd30_player::core::script_vm::VmState;
 
-const DISC_ROOT: &str = r"I:\";
-
 #[test]
 fn test_kernel_tb_script_and_hotspot_routing() {
-    let disc_path = PathBuf::from(DISC_ROOT);
-    if !disc_path.exists() {
-        eprintln!("Disc I:\\ not mounted, skipping test");
-        return;
-    }
-
+    let disc_path = common::get_test_disc_root();
     let mut kernel = VcdKernel::new();
     kernel.open_disc(disc_path).unwrap();
 
@@ -48,11 +42,7 @@ fn test_kernel_tb_script_and_hotspot_routing() {
 
 #[test]
 fn test_kernel_weight_interactive_script_and_remote_keys() {
-    let disc_path = PathBuf::from(DISC_ROOT);
-    if !disc_path.exists() {
-        return;
-    }
-
+    let disc_path = common::get_test_disc_root();
     let mut kernel = VcdKernel::new();
     kernel.open_disc(disc_path).unwrap();
 
@@ -145,4 +135,3 @@ fn test_kernel_weight_interactive_script_and_remote_keys() {
         "Key 32 should navigate back from WEIGHT.CHM to PROGRAM.CHM"
     );
 }
-

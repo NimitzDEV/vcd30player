@@ -1,4 +1,5 @@
-use std::path::PathBuf;
+mod common;
+
 use vcd30_player::core::kernel::VcdKernel;
 use vcd30_player::core::script_ast::{ScriptProgram, Statement};
 use vcd30_player::core::script_vm::{VcdScriptVm, VmHost, VmState};
@@ -76,12 +77,7 @@ fn test_empty_startup_state() {
 
 #[test]
 fn test_hotspot_dat_target_triggers_video() {
-    let disc_path = PathBuf::from(r"I:\");
-    if !disc_path.exists() {
-        eprintln!("Disc I:\\ not mounted, skipping test");
-        return;
-    }
-
+    let disc_path = common::get_test_disc_root();
     let mut kernel = VcdKernel::new();
     kernel.open_disc(disc_path).expect("Failed to open disc");
 
@@ -94,15 +90,15 @@ fn test_hotspot_dat_target_triggers_video() {
     kernel.load_page("SC1.CHM", true).expect("Failed to load SC1.CHM");
     assert_eq!(kernel.current_page_name, "SC1.CHM");
 
-    let dat_hotspot = {
-        let doc = kernel.current_page.as_ref().unwrap();
-        doc
-            .get_all_hotspots()
-            .into_iter()
-            .find(|h| h.target.to_uppercase().contains("MUSIC16.DAT"))
-            .cloned()
-            .expect("SC1.CHM should have a hotspot targeting MUSIC16.DAT")
-    };
+    let dat_hotspot = kernel
+        .current_page
+        .as_ref()
+        .unwrap()
+        .get_all_hotspots()
+        .into_iter()
+        .find(|h| h.target.to_uppercase().contains("MUSIC16.DAT"))
+        .cloned()
+        .expect("SC1.CHM should have a hotspot targeting MUSIC16.DAT");
 
     // Click hotspot
     let activated = kernel.activate_hotspot(&dat_hotspot).expect("Failed to activate hotspot");

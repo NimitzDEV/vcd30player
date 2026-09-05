@@ -1,4 +1,5 @@
-use std::path::Path;
+mod common;
+
 use vcd30_player::assets::chm::CompHtmlDoc;
 use vcd30_player::core::script_ast::{BinOp, CondOp, Expr, ScriptProgram, Statement};
 
@@ -97,7 +98,7 @@ fn test_unrecognized_instruction_captured() {
 
 #[test]
 fn test_parse_disc_tb_and_weight_scripts() {
-    let data_dir = Path::new(r"I:\DATA\VCD_DATA");
+    let data_dir = common::get_test_disc_root().join("DATA").join("VCD_DATA");
     if !data_dir.exists() {
         return;
     }

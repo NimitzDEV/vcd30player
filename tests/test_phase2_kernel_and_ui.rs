@@ -1,16 +1,10 @@
-use std::path::PathBuf;
-use vcd30_player::core::kernel::{CANVAS_HEIGHT, CANVAS_WIDTH, VcdKernel};
+mod common;
 
-const DISC_ROOT: &str = r"I:\";
+use vcd30_player::core::kernel::{CANVAS_HEIGHT, CANVAS_WIDTH, VcdKernel};
 
 #[test]
 fn test_kernel_open_disc_and_autorun() {
-    let disc_path = PathBuf::from(DISC_ROOT);
-    if !disc_path.exists() {
-        eprintln!("Disc I:\\ not mounted, skipping test");
-        return;
-    }
-
+    let disc_path = common::get_test_disc_root();
     let mut kernel = VcdKernel::new();
     kernel.open_disc(disc_path).expect("Failed to open disc");
 
@@ -34,11 +28,7 @@ fn test_kernel_open_disc_and_autorun() {
 
 #[test]
 fn test_kernel_hotspot_hit_testing_and_navigation() {
-    let disc_path = PathBuf::from(DISC_ROOT);
-    if !disc_path.exists() {
-        return;
-    }
-
+    let disc_path = common::get_test_disc_root();
     let mut kernel = VcdKernel::new();
     kernel.open_disc(disc_path).unwrap();
 
@@ -84,11 +74,7 @@ fn test_kernel_hotspot_hit_testing_and_navigation() {
 
 #[test]
 fn test_kernel_navigation_to_subpages() {
-    let disc_path = PathBuf::from(DISC_ROOT);
-    if !disc_path.exists() {
-        return;
-    }
-
+    let disc_path = common::get_test_disc_root();
     let mut kernel = VcdKernel::new();
     kernel.open_disc(disc_path).unwrap();
 
@@ -126,11 +112,7 @@ fn test_kernel_navigation_to_subpages() {
 
 #[test]
 fn test_ok_help1_polygon_hotspot_navigation() {
-    let disc_path = PathBuf::from(DISC_ROOT);
-    if !disc_path.exists() {
-        return;
-    }
-
+    let disc_path = common::get_test_disc_root();
     let mut kernel = VcdKernel::new();
     kernel.open_disc(disc_path).unwrap();
 
@@ -141,7 +123,7 @@ fn test_ok_help1_polygon_hotspot_navigation() {
     // Check hotspots on OK_HELP1.CHM
     let hotspots = kernel.current_page.as_ref().unwrap().get_all_hotspots();
     assert_eq!(hotspots.len(), 1, "OK_HELP1.CHM should have 1 hotspot");
-    let area = hotspots[0];
+    let area = &hotspots[0];
     assert_eq!(
         area.target, "OK_HELP2.CHM",
         "Target link of polygon hotspot in OK_HELP1.CHM must be OK_HELP2.CHM"
@@ -172,11 +154,7 @@ fn test_ok_help1_polygon_hotspot_navigation() {
 
 #[test]
 fn test_psyche_dense_hotspots_no_overlap() {
-    let disc_path = PathBuf::from(DISC_ROOT);
-    if !disc_path.exists() {
-        return;
-    }
-
+    let disc_path = common::get_test_disc_root();
     let mut kernel = VcdKernel::new();
     kernel.open_disc(disc_path).unwrap();
 

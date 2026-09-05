@@ -1,15 +1,20 @@
-use std::path::Path;
+mod common;
+
 use vcd30_player::video::{extract_mpeg_ps, MpegDecoder, VideoPlayState, VideoPlayer};
 
 #[test]
 fn test_cdxa_extraction_and_decoder_metadata() {
-    let dat_path = Path::new("I:/MPEGAV/MUSIC01.DAT");
+    let Some(root) = common::get_live_disc_root() else {
+        eprintln!("No live CD-ROM mounted, skipping real video test.");
+        return;
+    };
+    let dat_path = root.join("MPEGAV").join("MUSIC01.DAT");
     if !dat_path.exists() {
-        eprintln!("Disc not found at I:/MPEGAV/MUSIC01.DAT, skipping test.");
+        eprintln!("Disc not found at {}, skipping test.", dat_path.display());
         return;
     }
 
-    let raw_bytes = std::fs::read(dat_path).expect("Failed to read MUSIC01.DAT");
+    let raw_bytes = std::fs::read(&dat_path).expect("Failed to read MUSIC01.DAT");
     assert!(raw_bytes.len() > 100_000);
 
     // 1. Demux test
@@ -51,13 +56,17 @@ fn test_cdxa_extraction_and_decoder_metadata() {
 
 #[test]
 fn test_video_player_playback_and_seek() {
-    let dat_path = Path::new("I:/MPEGAV/MUSIC01.DAT");
+    let Some(root) = common::get_live_disc_root() else {
+        eprintln!("No live CD-ROM mounted, skipping real video test.");
+        return;
+    };
+    let dat_path = root.join("MPEGAV").join("MUSIC01.DAT");
     if !dat_path.exists() {
-        eprintln!("Disc not found at I:/MPEGAV/MUSIC01.DAT, skipping test.");
+        eprintln!("Disc not found at {}, skipping test.", dat_path.display());
         return;
     }
 
-    let raw_bytes = std::fs::read(dat_path).expect("Failed to read MUSIC01.DAT");
+    let raw_bytes = std::fs::read(&dat_path).expect("Failed to read MUSIC01.DAT");
     let mut player = VideoPlayer::new(
         &raw_bytes,
         "MUSIC01.DAT".to_string(),

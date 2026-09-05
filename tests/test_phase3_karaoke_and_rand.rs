@@ -1,4 +1,5 @@
-use std::path::Path;
+mod common;
+
 use vcd30_player::core::kernel::{KaraokePlaylist, VcdKernel};
 use vcd30_player::core::script_ast::ScriptProgram;
 use vcd30_player::core::script_vm::{VcdScriptVm, VmHost, VmState};
@@ -159,13 +160,9 @@ fn test_typo_resilience_kraroke_and_drawimgae() {
 
 #[test]
 fn test_kara_pr1_and_kara_2_disc_integration() {
-    let disc_path = Path::new(r"I:\DATA\VCD_DATA");
-    if !disc_path.exists() {
-        return;
-    }
-
+    let disc_path = common::get_test_disc_root();
     let mut kernel = VcdKernel::new();
-    kernel.open_disc(std::path::PathBuf::from(r"I:\")).unwrap();
+    kernel.open_disc(disc_path).unwrap();
 
     // Test 1: Load KARA_2.CHM
     let res = kernel.load_page("KARA_2.CHM", true);
@@ -214,13 +211,9 @@ fn test_if_then_else_parsing_and_execution() {
 
 #[test]
 fn test_kara_1_sequential_playback_flow() {
-    let disc_path = Path::new(r"I:\DATA\VCD_DATA");
-    if !disc_path.exists() {
-        return;
-    }
-
+    let disc_path = common::get_test_disc_root();
     let mut kernel = VcdKernel::new();
-    kernel.open_disc(std::path::PathBuf::from(r"I:\")).unwrap();
+    kernel.open_disc(disc_path).unwrap();
 
     // 1. Initialise KARA_1.CHM (sets 19 slots to 0)
     kernel.load_page("KARA_1.CHM", true).unwrap();
@@ -273,13 +266,9 @@ fn test_kara_1_sequential_playback_flow() {
 
 #[test]
 fn test_kara_2l1_delete_and_href() {
-    let disc_path = Path::new(r"I:\DATA\VCD_DATA");
-    if !disc_path.exists() {
-        return;
-    }
-
+    let disc_path = common::get_test_disc_root();
     let mut kernel = VcdKernel::new();
-    kernel.open_disc(std::path::PathBuf::from(r"I:\")).unwrap();
+    kernel.open_disc(disc_path).unwrap();
 
     // Set up playlist with 3 songs: 4, 5, 6
     kernel.karaoke_playlist.set(1, 4);
@@ -307,7 +296,7 @@ fn test_kara_2l1_delete_and_href() {
 
 #[test]
 fn test_inspect_all_kara_pages() {
-    let disc_path = Path::new(r"I:\DATA\VCD_DATA");
+    let disc_path = common::get_test_disc_root().join("DATA").join("VCD_DATA");
     if !disc_path.exists() {
         return;
     }

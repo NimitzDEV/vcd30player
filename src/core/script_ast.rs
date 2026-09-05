@@ -64,6 +64,7 @@ pub enum Statement {
     Assign(u8, Expr),
     CallIrkey(u8),
     CallTime(u8),
+    CallRand(u8),
     DrawCursor(Expr, Expr),
     DrawImage {
         file: String,
@@ -79,6 +80,13 @@ pub enum Statement {
         exit_page: Option<String>,
     },
     KaraokeSet(Expr, Expr),
+    KaraokeGet {
+        index: Expr,
+        target_var: u8,
+    },
+    KaraokeDel(Expr),
+    KaraokeIns(Expr, Expr),
+    KaraokePlay,
     Goto(Expr),
     Gosub(Expr),
     Return,
@@ -261,6 +269,18 @@ pub fn parse_single_statement(s: &str) -> Statement {
         }
     }
 
+    // CALL RAND(N)
+    if upper.starts_with("CALL") && upper.contains("RAND") {
+        if let Some(var) = extract_call_arg_var(trimmed, "RAND") {
+            return Statement::CallRand(var);
+        } else {
+            return Statement::Unknown {
+                raw: trimmed.to_string(),
+                reason: "CALL RAND 必须包含单变量参数，例如 CALL RAND(N)".to_string(),
+            };
+        }
+    }
+
     // DRAWCURSOR X, Y
     if upper.starts_with("DRAWCURSOR") {
         let rest = trimmed[10..].trim();
@@ -276,8 +296,8 @@ pub fn parse_single_statement(s: &str) -> Statement {
         };
     }
 
-    // DRAWIMAGE "filename", X, Y, mode
-    if upper.starts_with("DRAWIMAGE") {
+    // DRAWIMAGE "filename", X, Y, mode (also supports DRAWIMGAE typo in disc scripts)
+    if upper.starts_with("DRAWIMAGE") || upper.starts_with("DRAWIMGAE") {
         let rest = trimmed[9..].trim();
         if let Some((file, args)) = extract_string_and_args(rest) {
             let parts: Vec<&str> = args.split(',').collect();
@@ -361,20 +381,83 @@ pub fn parse_single_statement(s: &str) -> Statement {
         };
     }
 
-    // KARAOKE SET ch, mode
-    if upper.starts_with("KARAOKE") && upper.contains("SET") {
-        let idx = upper.find("SET").unwrap() + 3;
-        let rest = trimmed[idx..].trim();
-        let parts: Vec<&str> = rest.split(',').collect();
-        if parts.len() == 2 {
-            if let (Some(ch), Some(mode)) = (parse_expr(parts[0].trim()), parse_expr(parts[1].trim())) {
-                return Statement::KaraokeSet(ch, mode);
-            }
+    // KARAOKE / KRAROKE / KRARAOKE subcommands
+    let is_karaoke = upper.starts_with("KARAOKE")
+        || upper.starts_with("KRAROKE")
+        || upper.starts_with("KRARAOKE");
+    if is_karaoke {
+        // 1. KARAOKE PLAY
+        if upper.contains("PLAY") {
+            return Statement::KaraokePlay;
         }
-        return Statement::Unknown {
-            raw: trimmed.to_string(),
-            reason: format!("无效的 KARAOKE SET 参数: '{}'", rest),
-        };
+
+        // 2. KARAOKE GET index, var
+        if upper.contains("GET") {
+            let idx = upper.find("GET").unwrap() + 3;
+            let rest = trimmed[idx..].trim();
+            let parts: Vec<&str> = rest.split(',').collect();
+            if parts.len() == 2 {
+                let var_part = parts[1].trim();
+                if var_part.len() == 1 && var_part.chars().next().unwrap().is_ascii_alphabetic() {
+                    let var = var_part.chars().next().unwrap().to_ascii_uppercase() as u8;
+                    if let Some(index_expr) = parse_expr(parts[0].trim()) {
+                        return Statement::KaraokeGet {
+                            index: index_expr,
+                            target_var: var,
+                        };
+                    }
+                }
+            }
+            return Statement::Unknown {
+                raw: trimmed.to_string(),
+                reason: format!("无效的 KARAOKE GET 参数: '{}'", rest),
+            };
+        }
+
+        // 3. KARAOKE DEL index
+        if upper.contains("DEL") {
+            let idx = upper.find("DEL").unwrap() + 3;
+            let rest = trimmed[idx..].trim();
+            if let Some(index_expr) = parse_expr(rest) {
+                return Statement::KaraokeDel(index_expr);
+            }
+            return Statement::Unknown {
+                raw: trimmed.to_string(),
+                reason: format!("无效的 KARAOKE DEL 参数: '{}'", rest),
+            };
+        }
+
+        // 4. KARAOKE INS index, val
+        if upper.contains("INS") {
+            let idx = upper.find("INS").unwrap() + 3;
+            let rest = trimmed[idx..].trim();
+            let parts: Vec<&str> = rest.split(',').collect();
+            if parts.len() == 2 {
+                if let (Some(idx_expr), Some(val_expr)) = (parse_expr(parts[0].trim()), parse_expr(parts[1].trim())) {
+                    return Statement::KaraokeIns(idx_expr, val_expr);
+                }
+            }
+            return Statement::Unknown {
+                raw: trimmed.to_string(),
+                reason: format!("无效的 KARAOKE INS 参数: '{}'", rest),
+            };
+        }
+
+        // 5. KARAOKE SET index, val
+        if upper.contains("SET") {
+            let idx = upper.find("SET").unwrap() + 3;
+            let rest = trimmed[idx..].trim();
+            let parts: Vec<&str> = rest.split(',').collect();
+            if parts.len() == 2 {
+                if let (Some(ch), Some(mode)) = (parse_expr(parts[0].trim()), parse_expr(parts[1].trim())) {
+                    return Statement::KaraokeSet(ch, mode);
+                }
+            }
+            return Statement::Unknown {
+                raw: trimmed.to_string(),
+                reason: format!("无效的 KARAOKE SET 参数: '{}'", rest),
+            };
+        }
     }
 
     // IF <cond> THEN <stmt>

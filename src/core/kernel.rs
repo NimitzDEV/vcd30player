@@ -44,6 +44,7 @@ pub struct KernelHost<'a> {
     pub sprite_cache: &'a mut HashMap<String, YbmImage>,
     pub start_time: Instant,
     pub pending_video: &'a mut Option<(String, i32, i32, Option<String>)>,
+    pub karaoke_playlist: &'a mut Vec<i32>,
 }
 
 impl<'a> KernelHost<'a> {
@@ -89,8 +90,64 @@ impl<'a> VmHost for KernelHost<'a> {
         ));
     }
 
-    fn karaoke_set(&mut self, _channel: i32, _mode: i32) {
-        // Karaoke channel settings (recorded or log)
+    fn karaoke_set(&mut self, index: i32, val: i32) {
+        let idx = if index <= 0 { 1 } else { index as usize };
+        if idx <= self.karaoke_playlist.len() {
+            self.karaoke_playlist[idx - 1] = val;
+        } else if self.karaoke_playlist.len() < 19 {
+            self.karaoke_playlist.push(val);
+        }
+    }
+
+    fn karaoke_get(&self, index: i32) -> i32 {
+        if index <= 0 || (index as usize) > self.karaoke_playlist.len() {
+            -1
+        } else {
+            self.karaoke_playlist[(index - 1) as usize]
+        }
+    }
+
+    fn karaoke_del(&mut self, index: i32) {
+        if index > 0 && (index as usize) <= self.karaoke_playlist.len() {
+            self.karaoke_playlist.remove((index - 1) as usize);
+        }
+    }
+
+    fn karaoke_ins(&mut self, index: i32, val: i32) {
+        if index > 0 && (index as usize) <= self.karaoke_playlist.len() && self.karaoke_playlist.len() < 19 {
+            self.karaoke_playlist.insert((index - 1) as usize, val);
+        }
+    }
+
+    fn karaoke_play(&mut self) -> bool {
+        if self.karaoke_playlist.is_empty() {
+            return false;
+        }
+        let song_id = self.karaoke_playlist.remove(0);
+        let candidates = if song_id < 10 {
+            vec![
+                format!("MPEGAV/MUSIC0{}.DAT", song_id),
+                format!("MPEGAV/AVSEQ0{}.DAT", song_id),
+                format!("MUSIC0{}.DAT", song_id),
+                format!("AVSEQ0{}.DAT", song_id),
+            ]
+        } else {
+            vec![
+                format!("MPEGAV/MUSIC{}.DAT", song_id),
+                format!("MPEGAV/AVSEQ{}.DAT", song_id),
+                format!("MUSIC{}.DAT", song_id),
+                format!("AVSEQ{}.DAT", song_id),
+            ]
+        };
+        for cand in &candidates {
+            if self.find_file(cand).is_some() {
+                *self.pending_video = Some((cand.clone(), 0, 0, None));
+                return true;
+            }
+        }
+        let fallback = candidates[0].clone();
+        *self.pending_video = Some((fallback, 0, 0, None));
+        true
     }
 
     fn get_time_ms(&self) -> u64 {
@@ -114,6 +171,7 @@ pub struct VcdKernel {
     pub sprite_cache: HashMap<String, YbmImage>,
     pub start_time: Instant,
     pub active_video: Option<VideoPlayer>,
+    pub karaoke_playlist: Vec<i32>,
 }
 
 impl VcdKernel {
@@ -139,6 +197,7 @@ impl VcdKernel {
             sprite_cache: HashMap::new(),
             start_time: Instant::now(),
             active_video: None,
+            karaoke_playlist: Vec::new(),
         }
     }
 
@@ -357,6 +416,7 @@ impl VcdKernel {
                 sprite_cache: &mut self.sprite_cache,
                 start_time: self.start_time,
                 pending_video: &mut pending_video,
+                karaoke_playlist: &mut self.karaoke_playlist,
             };
             self.vm.run_until_yield(&mut host)
         };
@@ -467,6 +527,7 @@ impl VcdKernel {
                     sprite_cache: &mut self.sprite_cache,
                     start_time: self.start_time,
                     pending_video: &mut pending_video,
+                    karaoke_playlist: &mut self.karaoke_playlist,
                 };
                 self.vm.inject_key(key_code, &mut host)
             };
@@ -502,6 +563,7 @@ impl VcdKernel {
                 sprite_cache: &mut self.sprite_cache,
                 start_time: self.start_time,
                 pending_video: &mut pending_video,
+                karaoke_playlist: &mut self.karaoke_playlist,
             };
             self.vm.skip_unrecognized_and_continue(&mut host)
         };

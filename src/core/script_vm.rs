@@ -9,7 +9,17 @@ pub trait VmHost {
     fn draw_cursor(&mut self, x: i32, y: i32);
     fn play_sound(&mut self, filename: &str);
     fn play_video(&mut self, filename: &str, start_frame: i32, end_frame: i32, exit_page: Option<&str>);
-    fn karaoke_set(&mut self, channel: i32, mode: i32);
+    fn karaoke_set(&mut self, channel: i32, mode: i32) {
+        let _ = (channel, mode);
+    }
+    fn karaoke_get(&self, _index: i32) -> i32 {
+        -1
+    }
+    fn karaoke_del(&mut self, _index: i32) {}
+    fn karaoke_ins(&mut self, _index: i32, _val: i32) {}
+    fn karaoke_play(&mut self) -> bool {
+        false
+    }
     fn get_time_ms(&self) -> u64;
     /// Returns time in 0.1-second (100ms) units, exactly matching original
     /// AUTORUN.EXE (0x40d2b7: CRT time_t * 10 % 65535, i.e. 1 unit = 100ms).
@@ -51,6 +61,7 @@ pub struct VcdScriptVm {
     pub state: VmState,
     pub call_stack: Vec<Option<(u32, usize)>>,
     for_stack: Vec<ForLoopState>,
+    pub prng_seed: u32,
 }
 
 impl VcdScriptVm {
@@ -62,6 +73,7 @@ impl VcdScriptVm {
             state: VmState::Ready,
             call_stack: Vec::new(),
             for_stack: Vec::new(),
+            prng_seed: 0,
         }
     }
 
@@ -170,6 +182,18 @@ impl VcdScriptVm {
                 self.pc = next_pc;
                 self.state = VmState::Running;
             }
+            Statement::CallRand(target_var) => {
+                if self.prng_seed == 0 {
+                    let t = (host.get_time_units() as u32) & 0xff;
+                    self.prng_seed = if t == 0 { 1 } else { t };
+                }
+                // Park-Miller Minimal Standard PRNG (AUTORUN.EXE 0x40cca0: A=16807, M=2147483647)
+                let next = ((self.prng_seed as u64 * 16807) % 2147483647) as u32;
+                self.prng_seed = next;
+                self.set_variable(target_var, next as i32);
+                self.pc = next_pc;
+                self.state = VmState::Running;
+            }
             Statement::DrawCursor(x_expr, y_expr) => {
                 let x = x_expr.eval(&self.variables);
                 let y = y_expr.eval(&self.variables);
@@ -202,12 +226,41 @@ impl VcdScriptVm {
                 self.pc = next_pc;
                 self.state = VmState::WaitingForVideo;
             }
-            Statement::KaraokeSet(ch_expr, mode_expr) => {
-                let ch = ch_expr.eval(&self.variables);
-                let m = mode_expr.eval(&self.variables);
-                host.karaoke_set(ch, m);
+            Statement::KaraokeSet(idx_expr, val_expr) => {
+                let idx = idx_expr.eval(&self.variables);
+                let val = val_expr.eval(&self.variables);
+                host.karaoke_set(idx, val);
                 self.pc = next_pc;
                 self.state = VmState::Running;
+            }
+            Statement::KaraokeGet { index, target_var } => {
+                let idx = index.eval(&self.variables);
+                let val = host.karaoke_get(idx);
+                self.set_variable(target_var, val);
+                self.pc = next_pc;
+                self.state = VmState::Running;
+            }
+            Statement::KaraokeDel(expr) => {
+                let idx = expr.eval(&self.variables);
+                host.karaoke_del(idx);
+                self.pc = next_pc;
+                self.state = VmState::Running;
+            }
+            Statement::KaraokeIns(idx_expr, val_expr) => {
+                let idx = idx_expr.eval(&self.variables);
+                let val = val_expr.eval(&self.variables);
+                host.karaoke_ins(idx, val);
+                self.pc = next_pc;
+                self.state = VmState::Running;
+            }
+            Statement::KaraokePlay => {
+                let started = host.karaoke_play();
+                self.pc = next_pc;
+                if started {
+                    self.state = VmState::WaitingForVideo;
+                } else {
+                    self.state = VmState::Running;
+                }
             }
             Statement::Goto(expr) => {
                 let target_line = expr.eval(&self.variables) as u32;

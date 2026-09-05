@@ -68,7 +68,7 @@ impl VcdPlayerApp {
         setup_custom_fonts(&cc.egui_ctx);
 
         let mut kernel = VcdKernel::new();
-        let mut status = "空闲 - 请点击“打开光盘目录”载入 VCD 光盘".to_string();
+        let mut status = "空闲 - 请点击“加载光盘”载入 VCD 光盘".to_string();
 
         if let Some(root) = initial_disc {
             if root.exists() {
@@ -89,6 +89,67 @@ impl VcdPlayerApp {
             show_remote: true,
             hovered_hotspot: None,
             status_message: status,
+        }
+    }
+
+    /// Checks if a disc or page is currently loaded.
+    pub fn is_disc_loaded(&self) -> bool {
+        !self.kernel.disc_root.as_os_str().is_empty()
+            || self.kernel.current_page.is_some()
+            || self.kernel.is_video_active()
+    }
+
+    /// Ejects the current disc and resets kernel and UI to initial state.
+    pub fn eject_disc(&mut self) {
+        if let Some(mut v) = self.kernel.active_video.take() {
+            v.stop();
+        }
+        self.kernel.audio.stop_all();
+        self.kernel.disc_root = PathBuf::new();
+        self.kernel.current_page_name.clear();
+        self.kernel.current_page = None;
+        self.kernel.current_bg_image = None;
+        for chunk in self.kernel.canvas.chunks_exact_mut(4) {
+            chunk[0] = 0;
+            chunk[1] = 0;
+            chunk[2] = 0;
+            chunk[3] = 255;
+        }
+        self.kernel.history_stack.clear();
+        self.kernel.forward_stack.clear();
+        self.kernel.autorun_config = None;
+        self.kernel.cursor_pos = None;
+        self.kernel.active_alert = None;
+        self.kernel.sprite_cache.clear();
+        self.kernel.karaoke_playlist.clear();
+        self.kernel.vm.terminate();
+        self.texture = None;
+        self.texture_dirty = true;
+        self.status_message = "光盘已弹出，请加载光盘".to_string();
+    }
+
+    /// Resets the current disc or page to its freshly loaded state and restarts playback.
+    pub fn reset_disc(&mut self, ctx: &egui::Context) {
+        if !self.kernel.disc_root.as_os_str().is_empty() {
+            let root = self.kernel.disc_root.clone();
+            if let Err(e) = self.kernel.open_disc(root.clone()) {
+                self.status_message = format!("重置失败: {}", e);
+            } else {
+                self.status_message = format!("已重置光盘: {}", root.display());
+                self.texture = None;
+                self.texture_dirty = true;
+                ctx.request_repaint();
+            }
+        } else if !self.kernel.current_page_name.is_empty() {
+            let page = self.kernel.current_page_name.clone();
+            if let Err(e) = self.kernel.load_page(&page, false) {
+                self.status_message = format!("重置失败: {}", e);
+            } else {
+                self.status_message = format!("已重置页面: {}", page);
+                self.texture = None;
+                self.texture_dirty = true;
+                ctx.request_repaint();
+            }
         }
     }
 
@@ -187,172 +248,145 @@ impl eframe::App for VcdPlayerApp {
         }
 
 
-        // 1. Top Menu Bar Panel
-        egui::Panel::top("top_menu_bar").show(ui, |ui| {
+        // Bottom Control & Status Panel
+        egui::Panel::bottom("bottom_bar").show(ui, |ui| {
+            // Row 1: Disc Loading / Ejection, Reset, Persistent Video Playback Controls
             ui.horizontal(|ui| {
-                ui.menu_button("文件(F)", |ui| {
-                    if ui.button("📁 打开光盘目录 (Open Disc)...").clicked() {
-                        ui.close();
-                        if let Some(folder) = rfd::FileDialog::new().pick_folder() {
-                            if let Err(e) = self.kernel.open_disc(folder.clone()) {
-                                self.status_message = format!("打开失败: {}", e);
-                            } else {
-                                self.status_message = format!("已打开: {}", folder.display());
-                                self.texture = None;
-                                self.texture_dirty = true;
-                                ctx.request_repaint();
-                            }
-                        }
-                    }
+                let is_loaded = self.is_disc_loaded();
 
-                    if ui.button("📄 打开单个 .CHM 页面...").clicked() {
-                        ui.close();
-                        if let Some(file) = rfd::FileDialog::new()
-                            .add_filter("VCD30 Compiled HTML", &["chm", "CHM"])
-                            .pick_file()
-                        {
-                            if let Some(name) = file.file_name().and_then(|s| s.to_str()) {
-                                if let Err(e) = self.kernel.load_page(name, true) {
-                                    self.status_message = format!("加载页面失败: {}", e);
+                if !is_loaded {
+                    ui.scope(|ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+
+                        let left_cr = egui::CornerRadius { nw: 4, ne: 0, sw: 4, se: 0 };
+                        if ui.add(egui::Button::new("📁 加载光盘").corner_radius(left_cr)).clicked() {
+                            if let Some(folder) = rfd::FileDialog::new().pick_folder() {
+                                if let Err(e) = self.kernel.open_disc(folder.clone()) {
+                                    self.status_message = format!("打开失败: {}", e);
                                 } else {
-                                    self.status_message = format!("已加载: {}", name);
+                                    self.status_message = format!("已打开: {}", folder.display());
                                     self.texture = None;
                                     self.texture_dirty = true;
                                     ctx.request_repaint();
                                 }
                             }
                         }
+
+                        let right_cr = egui::CornerRadius { nw: 0, ne: 4, sw: 0, se: 4 };
+                        ui.visuals_mut().widgets.inactive.corner_radius = right_cr;
+                        ui.visuals_mut().widgets.hovered.corner_radius = right_cr;
+                        ui.visuals_mut().widgets.active.corner_radius = right_cr;
+                        ui.visuals_mut().widgets.open.corner_radius = right_cr;
+
+                        ui.menu_button("▼", |ui| {
+                            ui.visuals_mut().widgets.inactive.corner_radius = egui::CornerRadius::same(3);
+                            ui.visuals_mut().widgets.hovered.corner_radius = egui::CornerRadius::same(3);
+                            if ui.button("📄 加载CHM...").clicked() {
+                                ui.close();
+                                if let Some(file) = rfd::FileDialog::new()
+                                    .add_filter("VCD30 Compiled HTML", &["chm", "CHM"])
+                                    .pick_file()
+                                {
+                                    if let Some(parent) = file.parent() {
+                                        let mut disc_dir = parent.to_path_buf();
+                                        if disc_dir.ends_with("VCD_DATA") || disc_dir.ends_with("DATA") {
+                                            if let Some(p2) = disc_dir.parent() {
+                                                disc_dir = p2.to_path_buf();
+                                            }
+                                        }
+                                        self.kernel.disc_root = disc_dir;
+                                    }
+                                    if let Some(name) = file.file_name().and_then(|s| s.to_str()) {
+                                        if let Err(e) = self.kernel.load_page(name, true) {
+                                            self.status_message = format!("加载页面失败: {}", e);
+                                        } else {
+                                            self.status_message = format!("已加载: {}", name);
+                                            self.texture = None;
+                                            self.texture_dirty = true;
+                                            ctx.request_repaint();
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                    });
+                } else {
+                    if ui.button("⏏ 弹出光盘").clicked() {
+                        self.eject_disc();
+                        ctx.request_repaint();
+                    }
+                }
+
+                if ui
+                    .add_enabled(is_loaded, egui::Button::new("↺ 重置"))
+                    .clicked()
+                {
+                    self.reset_disc(&ctx);
+                }
+
+                ui.separator();
+
+                // Video playback controls (persistent toolbar row: active during video, disabled when inactive)
+                let mut stop_video = false;
+                if let Some(ref mut player) = self.kernel.active_video {
+                    let is_playing = player.is_playing();
+                    let btn_text = if is_playing { "⏸ 暂停 (Space)" } else { "▶ 播放 (Space)" };
+                    if ui.button(btn_text).clicked() {
+                        player.toggle_play_pause();
+                    }
+
+                    if ui.button("⏹ 停止并返回 (ESC)").clicked() {
+                        stop_video = true;
                     }
 
                     ui.separator();
-                    if ui.button("❌ 退出 (Exit)").clicked() {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                    }
-                });
 
-                ui.menu_button("导航(N)", |ui| {
-                    let can_back = !self.kernel.history_stack.is_empty();
-                    let can_fwd = !self.kernel.forward_stack.is_empty();
+                    let cur = player.current_time();
+                    let dur = player.duration();
+                    let cur_min = (cur / 60.0) as u32;
+                    let cur_sec = (cur % 60.0) as u32;
+                    let dur_min = (dur / 60.0) as u32;
+                    let dur_sec = (dur % 60.0) as u32;
+                    ui.label(format!("{:02}:{:02} / {:02}:{:02}", cur_min, cur_sec, dur_min, dur_sec));
 
-                    if ui
-                        .add_enabled(can_back, egui::Button::new("⏮ 后退 (Back)"))
-                        .clicked()
-                    {
-                        ui.close();
-                        if let Ok(true) = self.kernel.go_back() {
-                            self.texture = None;
-                            self.texture_dirty = true;
-                            ctx.request_repaint();
-                        }
+                    let mut seek_pos = cur;
+                    let slider = egui::Slider::new(&mut seek_pos, 0.0..=dur.max(1.0))
+                        .show_value(false)
+                        .text("");
+                    if ui.add(slider).changed() {
+                        player.seek(seek_pos);
                     }
 
-                    if ui
-                        .add_enabled(can_fwd, egui::Button::new("⏭ 前进 (Forward)"))
-                        .clicked()
-                    {
-                        ui.close();
-                        if let Ok(true) = self.kernel.go_forward() {
-                            self.texture = None;
-                            self.texture_dirty = true;
-                            ctx.request_repaint();
-                        }
-                    }
+                    ui.separator();
 
-                    if ui.button("🏠 主页 (Home)").clicked() {
-                        ui.close();
-                        if let Ok(()) = self.kernel.go_home() {
-                            self.texture = None;
-                            self.texture_dirty = true;
-                            ctx.request_repaint();
-                        }
-                    }
-                });
+                    let (w, h) = player.dimensions();
+                    let fps = player.framerate();
+                    ui.label(format!("🎬 {} ({}x{} @ {:.0}fps)", player.filename, w, h, fps));
+                } else {
+                    ui.add_enabled(false, egui::Button::new("▶ 播放 (Space)"));
+                    ui.add_enabled(false, egui::Button::new("⏹ 停止并返回 (ESC)"));
+                    ui.separator();
+                    ui.label(egui::RichText::new("--:-- / --:--").color(Color32::DARK_GRAY));
+                    let mut dummy_pos = 0.0;
+                    ui.add_enabled(
+                        false,
+                        egui::Slider::new(&mut dummy_pos, 0.0..=1.0).show_value(false).text(""),
+                    );
+                    ui.separator();
+                    ui.label(egui::RichText::new("🎬 未播放视频").color(Color32::DARK_GRAY));
+                }
 
-
-                ui.menu_button("视图(V)", |ui| {
-                    if ui
-                        .checkbox(&mut self.show_hotspots, "显示交互热区边框 (Debug Hotspots)")
-                        .clicked()
-                    {
-                        ui.close();
-                    }
-                    if ui
-                        .checkbox(&mut self.show_metadata, "显示页面元数据面板")
-                        .clicked()
-                    {
-                        ui.close();
-                    }
-                });
-
-                ui.menu_button("帮助(H)", |ui| {
-                    if ui.button("ℹ 关于 VCD 3.0 现代模拟器").clicked() {
-                        ui.close();
-                        self.status_message =
-                            "vcd30player Runtime (Rust) v0.1.0".to_string();
-                    }
-                });
-
-                // Quick toggle on right
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.checkbox(&mut self.show_remote, "🎮 遥控器");
-                    ui.add_space(8.0);
-                    ui.checkbox(&mut self.show_hotspots, "🎯 热区高亮");
-                });
+                if stop_video {
+                    let _ = self.kernel.stop_video_and_exit();
+                    self.texture = None;
+                    self.texture_dirty = true;
+                    ctx.request_repaint();
+                }
             });
-        });
 
-        // 2. Bottom Navigation & Status Bar Panel
-        egui::Panel::bottom("bottom_bar").show(ui, |ui| {
-            // Video Playback Control Row (independent line, only active during video playback)
-            if self.kernel.is_video_active() {
-                ui.horizontal(|ui| {
-                    let mut stop_video = false;
-                    if let Some(ref mut player) = self.kernel.active_video {
-                        let is_playing = player.is_playing();
-                        let btn_text = if is_playing { "⏸ 暂停 (Space)" } else { "▶ 播放 (Space)" };
-                        if ui.button(btn_text).clicked() {
-                            player.toggle_play_pause();
-                        }
+            ui.separator();
 
-                        if ui.button("⏹ 停止并返回 (ESC)").clicked() {
-                            stop_video = true;
-                        }
-
-                        ui.separator();
-
-                        let cur = player.current_time();
-                        let dur = player.duration();
-                        let cur_min = (cur / 60.0) as u32;
-                        let cur_sec = (cur % 60.0) as u32;
-                        let dur_min = (dur / 60.0) as u32;
-                        let dur_sec = (dur % 60.0) as u32;
-                        ui.label(format!("{:02}:{:02} / {:02}:{:02}", cur_min, cur_sec, dur_min, dur_sec));
-
-                        let mut seek_pos = cur;
-                        let slider = egui::Slider::new(&mut seek_pos, 0.0..=dur.max(1.0))
-                            .show_value(false)
-                            .text("");
-                        if ui.add(slider).changed() {
-                            player.seek(seek_pos);
-                        }
-
-                        ui.separator();
-
-                        let (w, h) = player.dimensions();
-                        let fps = player.framerate();
-                        ui.label(format!("🎬 {} ({}x{} @ {:.0}fps)", player.filename, w, h, fps));
-                    }
-
-                    if stop_video {
-                        let _ = self.kernel.stop_video_and_exit();
-                        self.texture = None;
-                        self.texture_dirty = true;
-                        ctx.request_repaint();
-                    }
-                });
-                ui.separator();
-            }
-
+            // Row 2: Navigation buttons, Debug checkboxes (right after Forward button), Page info & Status
             ui.horizontal(|ui| {
                 let can_back = !self.kernel.history_stack.is_empty();
                 let can_fwd = !self.kernel.forward_stack.is_empty();
@@ -387,6 +421,11 @@ impl eframe::App for VcdPlayerApp {
                     }
                 }
 
+                ui.separator();
+
+                // Requirement 3: 热区高亮和遥控器开关放在最底部的工具条上，在 前进按钮的后面
+                ui.checkbox(&mut self.show_hotspots, "🎯 热区高亮");
+                ui.checkbox(&mut self.show_remote, "🎮 遥控器");
 
                 ui.separator();
 
@@ -526,58 +565,121 @@ impl eframe::App for VcdPlayerApp {
                     ui.separator();
 
                     ui.label(egui::RichText::new("方向控制:").strong());
-                    ui.vertical_centered(|ui| {
-                        if ui.button(" ▲ 上 (34) ").clicked() {
-                            self.kernel.inject_remote_key(34);
-                            self.texture_dirty = true;
-                        }
-                        ui.horizontal(|ui| {
-                            if ui.button("◀ 左 (36)").clicked() {
-                                self.kernel.inject_remote_key(36);
-                                self.texture_dirty = true;
-                            }
-                            if ui.button(" 确定 (31) ").clicked() {
-                                self.kernel.inject_remote_key(31);
-                                self.texture_dirty = true;
-                            }
-                            if ui.button("右 (37) ▶").clicked() {
-                                self.kernel.inject_remote_key(37);
-                                self.texture_dirty = true;
-                            }
-                        });
-                        if ui.button(" ▼ 下 (35) ").clicked() {
-                            self.kernel.inject_remote_key(35);
+                    ui.add_space(4.0);
+
+                    let dpad_btn_size = Vec2::new(44.0, 30.0);
+                    let dpad_spacing = 4.0;
+                    let dpad_w = dpad_btn_size.x * 3.0 + dpad_spacing * 2.0; // 140.0
+                    let dpad_margin = ((ui.available_width() - dpad_w) / 2.0).max(0.0);
+
+                    ui.horizontal(|ui| {
+                        ui.add_space(dpad_margin);
+                        egui::Grid::new("remote_dpad_grid")
+                            .spacing([dpad_spacing, dpad_spacing])
+                            .show(ui, |ui| {
+                                ui.label("");
+                                if ui
+                                    .add(egui::Button::new("▲ 上").min_size(dpad_btn_size))
+                                    .clicked()
+                                {
+                                    self.kernel.inject_remote_key(34);
+                                    self.texture_dirty = true;
+                                }
+                                ui.label("");
+                                ui.end_row();
+
+                                if ui
+                                    .add(egui::Button::new("◀ 左").min_size(dpad_btn_size))
+                                    .clicked()
+                                {
+                                    self.kernel.inject_remote_key(36);
+                                    self.texture_dirty = true;
+                                }
+                                if ui
+                                    .add(egui::Button::new("确定").min_size(dpad_btn_size))
+                                    .clicked()
+                                {
+                                    self.kernel.inject_remote_key(31);
+                                    self.texture_dirty = true;
+                                }
+                                if ui
+                                    .add(egui::Button::new("右 ▶").min_size(dpad_btn_size))
+                                    .clicked()
+                                {
+                                    self.kernel.inject_remote_key(37);
+                                    self.texture_dirty = true;
+                                }
+                                ui.end_row();
+
+                                ui.label("");
+                                if ui
+                                    .add(egui::Button::new("▼ 下").min_size(dpad_btn_size))
+                                    .clicked()
+                                {
+                                    self.kernel.inject_remote_key(35);
+                                    self.texture_dirty = true;
+                                }
+                                ui.label("");
+                                ui.end_row();
+                            });
+                    });
+
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        ui.add_space(dpad_margin);
+                        if ui
+                            .add(
+                                egui::Button::new("⏹ 返回 / 退出 (32)")
+                                    .min_size(Vec2::new(dpad_w, 28.0)),
+                            )
+                            .clicked()
+                        {
+                            self.kernel.inject_remote_key(32);
                             self.texture_dirty = true;
                         }
                     });
 
-                    ui.add_space(6.0);
-                    if ui.button("⏹ 返回 / 退出 (32)").clicked() {
-                        self.kernel.inject_remote_key(32);
-                        self.texture_dirty = true;
-                    }
-
                     ui.separator();
                     ui.label(egui::RichText::new("数字按键 (0-9):").strong());
+                    ui.add_space(4.0);
 
-                    egui::Grid::new("remote_num_pad").spacing([6.0, 6.0]).show(ui, |ui| {
-                        for row in 0..3 {
-                            for col in 1..=3 {
-                                let num = row * 3 + col;
-                                if ui.button(format!(" {} ", num)).clicked() {
-                                    self.kernel.inject_remote_key(num);
+                    let num_btn_size = Vec2::new(44.0, 28.0);
+                    let num_spacing = 4.0;
+                    let num_w = num_btn_size.x * 3.0 + num_spacing * 2.0; // 140.0
+                    let num_margin = ((ui.available_width() - num_w) / 2.0).max(0.0);
+
+                    ui.horizontal(|ui| {
+                        ui.add_space(num_margin);
+                        egui::Grid::new("remote_num_pad")
+                            .spacing([num_spacing, num_spacing])
+                            .show(ui, |ui| {
+                                for row in 0..3 {
+                                    for col in 1..=3 {
+                                        let num = row * 3 + col;
+                                        if ui
+                                            .add(
+                                                egui::Button::new(format!("{}", num))
+                                                    .min_size(num_btn_size),
+                                            )
+                                            .clicked()
+                                        {
+                                            self.kernel.inject_remote_key(num);
+                                            self.texture_dirty = true;
+                                        }
+                                    }
+                                    ui.end_row();
+                                }
+                                ui.label("");
+                                if ui
+                                    .add(egui::Button::new("0").min_size(num_btn_size))
+                                    .clicked()
+                                {
+                                    self.kernel.inject_remote_key(0);
                                     self.texture_dirty = true;
                                 }
-                            }
-                            ui.end_row();
-                        }
-                        ui.label("");
-                        if ui.button(" 0 ").clicked() {
-                            self.kernel.inject_remote_key(0);
-                            self.texture_dirty = true;
-                        }
-                        ui.label("");
-                        ui.end_row();
+                                ui.label("");
+                                ui.end_row();
+                            });
                     });
 
                     ui.add_space(6.0);
@@ -585,7 +687,8 @@ impl eframe::App for VcdPlayerApp {
                     let vm_status = match &self.kernel.vm.state {
                         crate::core::script_vm::VmState::Ready => "就绪".to_string(),
                         crate::core::script_vm::VmState::Running => "运行中".to_string(),
-                        crate::core::script_vm::VmState::WaitingForKey { target_var } => {
+                        crate::core::script_vm::VmState::WaitingForKey { target_var }
+                        | crate::core::script_vm::VmState::WaitingForKeyWithTimeout { target_var, .. } => {
                             format!("等待输入 -> {}", *target_var as char)
                         }
                         crate::core::script_vm::VmState::WaitingForDelay { .. } => {
@@ -645,55 +748,13 @@ impl eframe::App for VcdPlayerApp {
                     && !self.kernel.is_video_active();
 
                 if is_empty {
-                    let card_rect = Rect::from_center_size(display_rect.center(), Vec2::new(340.0, 190.0));
-                    painter.rect_filled(card_rect, 8.0, Color32::from_rgb(24, 26, 34));
-                    painter.rect_stroke(card_rect, 8.0, Stroke::new(1.5, Color32::from_rgb(60, 75, 100)), StrokeKind::Inside);
-
                     painter.text(
-                        card_rect.center() - Vec2::new(0.0, 42.0),
+                        display_rect.center(),
                         egui::Align2::CENTER_CENTER,
-                        "💿 VCD 3.0 交互系统",
-                        egui::FontId::proportional(18.0),
-                        Color32::from_rgb(225, 235, 255),
+                        "INSERT DISC...",
+                        egui::FontId::monospace(22.0),
+                        Color32::from_rgb(170, 185, 210),
                     );
-
-                    painter.text(
-                        card_rect.center() - Vec2::new(0.0, 12.0),
-                        egui::Align2::CENTER_CENTER,
-                        "当前未载入光盘，请选择 VCD 光盘根目录开始体验",
-                        egui::FontId::proportional(12.0),
-                        Color32::from_rgb(170, 180, 200),
-                    );
-
-                    let btn_rect = Rect::from_center_size(card_rect.center() + Vec2::new(0.0, 38.0), Vec2::new(180.0, 36.0));
-                    let btn_resp = ui.interact(btn_rect, ui.id().with("empty_open_disc_btn"), egui::Sense::click());
-                    let btn_bg = if btn_resp.hovered() {
-                        Color32::from_rgb(45, 100, 180)
-                    } else {
-                        Color32::from_rgb(32, 75, 140)
-                    };
-                    painter.rect_filled(btn_rect, 6.0, btn_bg);
-                    painter.rect_stroke(btn_rect, 6.0, Stroke::new(1.0, Color32::from_rgb(90, 145, 220)), StrokeKind::Inside);
-                    painter.text(
-                        btn_rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        "📁 打开光盘目录...",
-                        egui::FontId::proportional(14.0),
-                        Color32::WHITE,
-                    );
-
-                    if btn_resp.clicked() {
-                        if let Some(folder) = rfd::FileDialog::new().pick_folder() {
-                            if let Err(e) = self.kernel.open_disc(folder.clone()) {
-                                self.status_message = format!("打开失败: {}", e);
-                            } else {
-                                self.status_message = format!("已打开: {}", folder.display());
-                                self.texture = None;
-                                self.texture_dirty = true;
-                                ctx.request_repaint();
-                            }
-                        }
-                    }
                 }
 
                 // If video is active, keep canvas completely clean (no cursor, no hotspot overlays)

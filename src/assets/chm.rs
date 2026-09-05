@@ -117,6 +117,10 @@ pub enum ChunkPayload {
         filename: String,
         loop_count: u32,
     },
+    Href {
+        target: String,
+        area: MapArea,
+    },
     VcdScript(String),
     Raw {
         chunk_type: u32,
@@ -374,6 +378,46 @@ impl CompHtmlDoc {
                         loop_count,
                     }
                 }
+                CHUNK_TYPE_HREF => {
+                    let mut target = String::new();
+                    if c_data.len() > 0xb0 {
+                        let t_len =
+                            u32::from_be_bytes(c_data[0xb0..0xb4].try_into().unwrap()) as usize;
+                        if t_len > 0 && 0xb8 + t_len <= c_data.len() {
+                            target = extract_null_terminated_str(&c_data[0xb8..0xb8 + t_len]);
+                        } else if 0xb8 < c_data.len() {
+                            target = extract_null_terminated_str(&c_data[0xb8..]);
+                        }
+                    }
+                    if target.is_empty() {
+                        for try_off in [0x00, 0x10, 0x20, 0x40, 0x80] {
+                            if try_off < c_data.len() {
+                                let s = extract_null_terminated_str(&c_data[try_off..]);
+                                if s.to_uppercase().ends_with(".CHM") || s.to_uppercase().ends_with(".DAT") {
+                                    target = s;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    let clean_target = target
+                        .trim()
+                        .trim_matches(|c: char| c.is_control() || c == '\0')
+                        .to_string();
+                    let area = MapArea {
+                        area_id: 1,
+                        x1: 0,
+                        y1: 0,
+                        x2: width as i32,
+                        y2: height as i32,
+                        target: clean_target.clone(),
+                        script_entry_line: None,
+                    };
+                    ChunkPayload::Href {
+                        target: clean_target,
+                        area,
+                    }
+                }
                 CHUNK_TYPE_VCDSCRIPT => {
                     // In VCDSCRIPT chunk:
                     // 0x00..0x0A: "VCDSCRIPT\0"
@@ -469,6 +513,15 @@ impl CompHtmlDoc {
             if let ChunkPayload::MapHotspots { areas, .. } = chunk {
                 for a in areas {
                     res.push(a);
+                }
+            }
+        }
+        if res.is_empty() {
+            for chunk in &self.chunks {
+                if let ChunkPayload::Href { area, .. } = chunk {
+                    if !area.target.is_empty() {
+                        res.push(area);
+                    }
                 }
             }
         }

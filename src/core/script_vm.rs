@@ -40,6 +40,7 @@ pub enum VmState {
     Ready,
     Running,
     WaitingForKey { target_var: u8 },
+    WaitingForKeyWithTimeout { target_var: u8, until_time: i32 },
     WaitingForDelay { until_time: i32 },
     WaitingForVideo,
     Finished,
@@ -62,6 +63,8 @@ pub struct VcdScriptVm {
     pub call_stack: Vec<Option<(u32, usize)>>,
     for_stack: Vec<ForLoopState>,
     pub prng_seed: u32,
+    pub has_call_time: bool,
+    pub is_karaoke_video: bool,
 }
 
 impl VcdScriptVm {
@@ -74,6 +77,8 @@ impl VcdScriptVm {
             call_stack: Vec::new(),
             for_stack: Vec::new(),
             prng_seed: 0,
+            has_call_time: false,
+            is_karaoke_video: false,
         }
     }
 
@@ -82,6 +87,8 @@ impl VcdScriptVm {
         self.variables = [0; 26];
         self.call_stack.clear();
         self.for_stack.clear();
+        self.has_call_time = false;
+        self.is_karaoke_video = false;
         self.pc = self.program.lines.keys().next().map(|&first| (first, 0));
         self.state = if self.pc.is_some() {
             VmState::Ready
@@ -174,9 +181,21 @@ impl VcdScriptVm {
             }
             Statement::CallIrkey(target_var) => {
                 self.pc = next_pc;
-                self.state = VmState::WaitingForKey { target_var };
+                if self.has_call_time {
+                    // AUTORUN.EXE 0x40cd4d & 0x40ce4c: When within a CALL TIME delay loop,
+                    // IRKEY polls with 1-second timeout (10 time units = 1000ms), and clears the flag.
+                    self.has_call_time = false;
+                    let until = host.get_time_units() + 10;
+                    self.state = VmState::WaitingForKeyWithTimeout {
+                        target_var,
+                        until_time: until,
+                    };
+                } else {
+                    self.state = VmState::WaitingForKey { target_var };
+                }
             }
             Statement::CallTime(target_var) => {
+                self.has_call_time = true;
                 let time_val = host.get_time_units();
                 self.set_variable(target_var, time_val);
                 self.pc = next_pc;
@@ -257,6 +276,7 @@ impl VcdScriptVm {
                 let started = host.karaoke_play();
                 self.pc = next_pc;
                 if started {
+                    self.is_karaoke_video = true;
                     self.state = VmState::WaitingForVideo;
                 } else {
                     self.state = VmState::Running;
@@ -292,7 +312,13 @@ impl VcdScriptVm {
                     self.state = VmState::Running;
                 }
             }
-            Statement::IfThen { lhs, op, rhs, stmt } => {
+            Statement::IfThen {
+                lhs,
+                op,
+                rhs,
+                then_stmt,
+                else_stmt,
+            } => {
                 let l = lhs.eval(&self.variables);
                 let r = rhs.eval(&self.variables);
                 let cond_met = match op {
@@ -308,7 +334,7 @@ impl VcdScriptVm {
                     // Check if this is a delay wait loop:
                     // e.g. `IF Y < X THEN GOTO 1802` where target line has `CALL TIME(...)`
                     if op == CondOp::Lt {
-                        if let Statement::Goto(ref target_expr) = *stmt {
+                        if let Statement::Goto(ref target_expr) = *then_stmt {
                             let target_line = target_expr.eval(&self.variables) as u32;
                             if target_line <= line_no {
                                 if let Some(target_stmts) = self.program.lines.get(&target_line) {
@@ -328,7 +354,9 @@ impl VcdScriptVm {
                         }
                     }
 
-                    self.execute_sub_statement(*stmt, next_pc, host);
+                    self.execute_sub_statement(*then_stmt, next_pc, host);
+                } else if let Some(else_s) = else_stmt {
+                    self.execute_sub_statement(*else_s, next_pc, host);
                 } else {
                     self.pc = next_pc;
                     self.state = VmState::Running;
@@ -442,10 +470,73 @@ impl VcdScriptVm {
                 self.pc = None;
                 self.state = VmState::Finished;
             }
+            Statement::KaraokePlay => {
+                let started = host.karaoke_play();
+                self.pc = fallback_next_pc;
+                if started {
+                    self.is_karaoke_video = true;
+                    self.state = VmState::WaitingForVideo;
+                } else {
+                    self.state = VmState::Running;
+                }
+            }
+            Statement::KaraokeDel(expr) => {
+                let idx = expr.eval(&self.variables);
+                host.karaoke_del(idx);
+                self.pc = fallback_next_pc;
+                self.state = VmState::Running;
+            }
+            Statement::KaraokeSet(idx_expr, val_expr) => {
+                let idx = idx_expr.eval(&self.variables);
+                let val = val_expr.eval(&self.variables);
+                host.karaoke_set(idx, val);
+                self.pc = fallback_next_pc;
+                self.state = VmState::Running;
+            }
+            Statement::IfThen {
+                lhs,
+                op,
+                rhs,
+                then_stmt,
+                else_stmt,
+            } => {
+                let l = lhs.eval(&self.variables);
+                let r = rhs.eval(&self.variables);
+                let cond_met = match op {
+                    CondOp::Eq => l == r,
+                    CondOp::Ne => l != r,
+                    CondOp::Lt => l < r,
+                    CondOp::Gt => l > r,
+                    CondOp::Le => l <= r,
+                    CondOp::Ge => l >= r,
+                };
+                if cond_met {
+                    self.execute_sub_statement(*then_stmt, fallback_next_pc, host);
+                } else if let Some(else_s) = else_stmt {
+                    self.execute_sub_statement(*else_s, fallback_next_pc, host);
+                } else {
+                    self.pc = fallback_next_pc;
+                    self.state = VmState::Running;
+                }
+            }
             _ => {
                 self.pc = fallback_next_pc;
                 self.state = VmState::Running;
             }
+        }
+    }
+
+    /// Handles video playback finish. If the video was initiated by KARAOKE PLAY,
+    /// AUTORUN.EXE (0x40d166..0x40d189) resets current execution to entry index 1
+    /// (the 2nd line of the script, e.g. Line 15 or Line 20) to loop into the next song.
+    pub fn on_video_finished(&mut self) {
+        if self.is_karaoke_video {
+            self.is_karaoke_video = false;
+            let entry1 = self.program.lines.keys().nth(1).copied().map(|l| (l, 0));
+            self.pc = entry1.or_else(|| self.program.lines.keys().next().copied().map(|l| (l, 0)));
+            self.state = VmState::Running;
+        } else if matches!(self.state, VmState::WaitingForVideo) {
+            self.state = VmState::Running;
         }
     }
 
@@ -456,6 +547,19 @@ impl VcdScriptVm {
                 return self.state.clone();
             } else {
                 self.state = VmState::Running;
+            }
+        }
+
+        if let VmState::WaitingForKeyWithTimeout {
+            target_var,
+            until_time,
+        } = self.state
+        {
+            if host.get_time_units() >= until_time {
+                self.set_variable(target_var, -1);
+                self.state = VmState::Running;
+            } else {
+                return self.state.clone();
             }
         }
 
@@ -471,6 +575,7 @@ impl VcdScriptVm {
             let res = self.step(host);
             match res {
                 VmState::WaitingForKey { .. }
+                | VmState::WaitingForKeyWithTimeout { .. }
                 | VmState::WaitingForDelay { .. }
                 | VmState::WaitingForVideo
                 | VmState::PausedForAlert(_)
@@ -489,12 +594,14 @@ impl VcdScriptVm {
 
     /// Injects key value when waiting for key input.
     pub fn inject_key(&mut self, key_code: i32, host: &mut dyn VmHost) -> VmState {
-        if let VmState::WaitingForKey { target_var } = self.state {
-            self.set_variable(target_var, key_code);
-            self.state = VmState::Running;
-            self.run_until_yield(host)
-        } else {
-            self.state.clone()
+        match self.state {
+            VmState::WaitingForKey { target_var }
+            | VmState::WaitingForKeyWithTimeout { target_var, .. } => {
+                self.set_variable(target_var, key_code);
+                self.state = VmState::Running;
+                self.run_until_yield(host)
+            }
+            _ => self.state.clone(),
         }
     }
 
@@ -513,6 +620,8 @@ impl VcdScriptVm {
         self.pc = None;
         self.call_stack.clear();
         self.for_stack.clear();
+        self.has_call_time = false;
+        self.is_karaoke_video = false;
         self.state = VmState::Finished;
     }
 }

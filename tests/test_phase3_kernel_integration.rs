@@ -74,6 +74,7 @@ fn test_kernel_weight_interactive_script_and_remote_keys() {
     assert!(matches!(
         state,
         VmState::WaitingForKey { target_var: b'X' }
+            | VmState::WaitingForKeyWithTimeout { target_var: b'X', .. }
     ));
 
     // Cursor should be at (272, 123) (Man)
@@ -84,6 +85,7 @@ fn test_kernel_weight_interactive_script_and_remote_keys() {
     assert!(matches!(
         state_down,
         VmState::WaitingForKey { target_var: b'X' }
+            | VmState::WaitingForKeyWithTimeout { target_var: b'X', .. }
     ));
     assert_eq!(kernel.cursor_pos, Some((294, 123)));
 
@@ -92,6 +94,7 @@ fn test_kernel_weight_interactive_script_and_remote_keys() {
     assert!(matches!(
         state_up,
         VmState::WaitingForKey { target_var: b'X' }
+            | VmState::WaitingForKeyWithTimeout { target_var: b'X', .. }
     ));
     assert_eq!(kernel.cursor_pos, Some((272, 123)));
 

@@ -1,12 +1,13 @@
 use std::path::Path;
-use vcd30_player::core::kernel::VcdKernel;
+use vcd30_player::core::kernel::{KaraokePlaylist, VcdKernel};
 use vcd30_player::core::script_ast::ScriptProgram;
 use vcd30_player::core::script_vm::{VcdScriptVm, VmHost, VmState};
 
 #[derive(Default)]
 struct MockKaraokeHost {
-    playlist: Vec<i32>,
+    playlist: KaraokePlaylist,
     video_played: Option<String>,
+    time_units: i32,
 }
 
 impl VmHost for MockKaraokeHost {
@@ -17,35 +18,22 @@ impl VmHost for MockKaraokeHost {
         self.video_played = Some(filename.to_string());
     }
     fn karaoke_set(&mut self, index: i32, val: i32) {
-        let idx = if index <= 0 { 1 } else { index as usize };
-        if idx <= self.playlist.len() {
-            self.playlist[idx - 1] = val;
-        } else if self.playlist.len() < 19 {
-            self.playlist.push(val);
-        }
+        self.playlist.set(index, val);
     }
     fn karaoke_get(&self, index: i32) -> i32 {
-        if index <= 0 || (index as usize) > self.playlist.len() {
-            -1
-        } else {
-            self.playlist[(index - 1) as usize]
-        }
+        self.playlist.get(index)
     }
     fn karaoke_del(&mut self, index: i32) {
-        if index > 0 && (index as usize) <= self.playlist.len() {
-            self.playlist.remove((index - 1) as usize);
-        }
+        self.playlist.del(index);
     }
     fn karaoke_ins(&mut self, index: i32, val: i32) {
-        if index > 0 && (index as usize) <= self.playlist.len() && self.playlist.len() < 19 {
-            self.playlist.insert((index - 1) as usize, val);
-        }
+        self.playlist.ins(index, val);
     }
     fn karaoke_play(&mut self) -> bool {
-        if self.playlist.is_empty() {
-            return false;
-        }
-        let song_id = self.playlist.remove(0);
+        let song_id = match self.playlist.play() {
+            Some(id) => id,
+            None => return false,
+        };
         let track = if song_id < 10 {
             format!("MPEGAV/MUSIC0{}.DAT", song_id)
         } else {
@@ -56,6 +44,9 @@ impl VmHost for MockKaraokeHost {
     }
     fn get_time_ms(&self) -> u64 {
         12345
+    }
+    fn get_time_units(&self) -> i32 {
+        self.time_units
     }
 }
 
@@ -192,13 +183,145 @@ fn test_kara_pr1_and_kara_2_disc_integration() {
     assert_eq!(kernel.karaoke_playlist[0], 4);
 
     // Test 2: Load KARA_PR1.CHM (Random song picker)
-    let res2 = kernel.load_page("KARA_PR1.CHM", true);
-    assert!(res2.is_ok(), "KARA_PR1.CHM must load successfully");
+    let res = kernel.load_page("KARA_PR1.CHM", true);
+    assert!(res.is_ok(), "KARA_PR1.CHM must load successfully");
     assert_eq!(kernel.current_page_name, "KARA_PR1.CHM");
-
-    // Variable N should be picked at random in 1..=10, and M = N + 3
     let n = kernel.vm.get_variable(b'N');
     let m = kernel.vm.get_variable(b'M');
     assert!(n >= 1 && n <= 10, "KARA_PR1 must pick N in 1..=10, got {}", n);
     assert_eq!(m, n + 3, "M must be N + 3");
 }
+
+#[test]
+fn test_if_then_else_parsing_and_execution() {
+    let code = r#"
+10 X = 5
+20 IF X = 10 THEN Y = 100 ELSE Y = 200
+30 IF X = 5 THEN Z = 300 ELSE Z = 400
+40 END
+"#;
+    let prog = ScriptProgram::parse(code);
+    let mut vm = VcdScriptVm::new();
+    let mut host = MockKaraokeHost::default();
+
+    vm.load_program(prog);
+    let state = vm.run_until_yield(&mut host);
+
+    assert_eq!(state, VmState::Finished);
+    assert_eq!(vm.get_variable(b'Y'), 200, "ELSE branch should execute when cond false");
+    assert_eq!(vm.get_variable(b'Z'), 300, "THEN branch should execute when cond true");
+}
+
+#[test]
+fn test_kara_1_sequential_playback_flow() {
+    let disc_path = Path::new(r"I:\DATA\VCD_DATA");
+    if !disc_path.exists() {
+        return;
+    }
+
+    let mut kernel = VcdKernel::new();
+    kernel.open_disc(std::path::PathBuf::from(r"I:\")).unwrap();
+
+    // 1. Initialise KARA_1.CHM (sets 19 slots to 0)
+    kernel.load_page("KARA_1.CHM", true).unwrap();
+    assert_eq!(kernel.karaoke_playlist.len(), 19);
+    for i in 0..19 {
+        assert_eq!(kernel.karaoke_playlist[i], 0);
+    }
+
+    // 2. Navigate to KARA_P1.CHM (sequential player)
+    kernel.load_page("KARA_P1.CHM", true).unwrap();
+    // At line 610, it should be waiting for key with 1-second timeout
+    assert!(matches!(
+        kernel.vm.state,
+        VmState::WaitingForKeyWithTimeout { target_var: b'I', .. }
+    ));
+    assert_eq!(kernel.karaoke_playlist[0], 4, "First song should be 4 (MUSIC04.DAT)");
+    assert_eq!(kernel.karaoke_playlist[1], 1, "Track counter B should be 1");
+
+    // Simulate clicking Continue (hotspot line 700) or 1s timeout:
+    kernel.vm.start_at_line(700);
+    let state = kernel.run_vm();
+    assert_eq!(state, VmState::WaitingForVideo);
+    assert!(kernel.is_video_active(), "Video MUSIC04.DAT should be playing");
+
+    // 3. Stop video (simulate playback end)
+    kernel.stop_video_and_exit().unwrap();
+    // on_video_finished() should reset PC to Entry 1 (Line 20)
+    // Line 20 reads B=1, increments to B=2, sets song 5 (MUSIC05.DAT), sets B=2, enters wait loop!
+    assert!(matches!(
+        kernel.vm.state,
+        VmState::WaitingForKeyWithTimeout { target_var: b'I', .. }
+    ));
+    assert_eq!(kernel.karaoke_playlist[0], 5, "Second song should be 5 (MUSIC05.DAT)");
+    assert_eq!(kernel.karaoke_playlist[1], 2, "Track counter B should be 2");
+
+    // 4. Play second song
+    kernel.vm.start_at_line(700);
+    let state = kernel.run_vm();
+    assert_eq!(state, VmState::WaitingForVideo);
+    kernel.stop_video_and_exit().unwrap();
+
+    // Line 20 reads B=2, increments to B=3, sets song 6 (MUSIC06.DAT)...
+    assert!(matches!(
+        kernel.vm.state,
+        VmState::WaitingForKeyWithTimeout { target_var: b'I', .. }
+    ));
+    assert_eq!(kernel.karaoke_playlist[0], 6, "Third song should be 6 (MUSIC06.DAT)");
+    assert_eq!(kernel.karaoke_playlist[1], 3, "Track counter B should be 3");
+}
+
+#[test]
+fn test_kara_2l1_delete_and_href() {
+    let disc_path = Path::new(r"I:\DATA\VCD_DATA");
+    if !disc_path.exists() {
+        return;
+    }
+
+    let mut kernel = VcdKernel::new();
+    kernel.open_disc(std::path::PathBuf::from(r"I:\")).unwrap();
+
+    // Set up playlist with 3 songs: 4, 5, 6
+    kernel.karaoke_playlist.set(1, 4);
+    kernel.karaoke_playlist.set(2, 5);
+    kernel.karaoke_playlist.set(3, 6);
+    assert_eq!(kernel.karaoke_playlist.len(), 3);
+
+    // Load KARA_2L1.CHM (Delete last song)
+    kernel.load_page("KARA_2L1.CHM", true).unwrap();
+
+    // Must finish without loop limit error
+    assert_eq!(kernel.vm.state, VmState::Finished, "KARA_2L1.CHM must finish without loop error");
+    assert_eq!(kernel.karaoke_playlist.len(), 2, "Playlist should now have 2 songs");
+    assert_eq!(kernel.karaoke_playlist.get(1), 4);
+    assert_eq!(kernel.karaoke_playlist.get(2), 5);
+    assert_eq!(kernel.karaoke_playlist.get(3), -1);
+
+    // Hotspot check: KARA_2L1.CHM must have the full-screen chunk 13 Href hotspot
+    let area = kernel.hit_test(100, 100).cloned().expect("Should hit full-screen Href hotspot");
+    assert_eq!(area.target, "KARA_2L.CHM");
+    let activated = kernel.activate_hotspot(&area).unwrap();
+    assert!(activated);
+    assert_eq!(kernel.current_page_name, "KARA_2L.CHM");
+}
+
+#[test]
+fn test_inspect_all_kara_pages() {
+    let disc_path = Path::new(r"I:\DATA\VCD_DATA");
+    if !disc_path.exists() {
+        return;
+    }
+
+    for name in ["KARA_1.CHM", "KARA_2.CHM", "KARA_P1.CHM", "KARA_PR1.CHM", "KARA_PS.CHM", "KARA_2L.CHM", "KARA_2L1.CHM"] {
+        let p = disc_path.join(name);
+        if let Ok(bytes) = std::fs::read(&p) {
+            if let Ok(doc) = vcd30_player::assets::chm::CompHtmlDoc::parse(&bytes) {
+                println!("=== CHM: {} ===", name);
+                for (i, area) in doc.get_all_hotspots().iter().enumerate() {
+                    println!("  Hotspot {}: target='{}', line={:?}, rect={:?}", i, area.target, area.script_entry_line, (area.x1, area.y1, area.x2, area.y2));
+                }
+            }
+        }
+    }
+}
+

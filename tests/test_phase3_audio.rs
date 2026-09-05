@@ -190,7 +190,11 @@ fn test_weight_chm_audio_timing_and_intro_delay() {
         kernel.start_time = std::time::Instant::now() - std::time::Duration::from_millis(3500);
         let state_end = kernel.run_vm();
         assert!(
-            matches!(state_end, VmState::WaitingForKey { target_var: b'X' }),
+            matches!(
+                state_end,
+                VmState::WaitingForKey { target_var: b'X' }
+                    | VmState::WaitingForKeyWithTimeout { target_var: b'X', .. }
+            ),
             "At 3.5s, delay completed, W08.WAV triggered, waiting for gender selection (Key X)!"
         );
     }

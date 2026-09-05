@@ -36,6 +36,110 @@ impl fmt::Display for KernelError {
 
 impl std::error::Error for KernelError {}
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KaraokePlaylist {
+    pub slots: [i32; 19],
+    pub count: usize,
+}
+
+impl KaraokePlaylist {
+    pub fn new() -> Self {
+        Self {
+            slots: [0; 19],
+            count: 0,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+
+    pub fn len(&self) -> usize {
+        self.count
+    }
+
+    pub fn set(&mut self, index: i32, val: i32) {
+        if index <= 0 {
+            self.slots[0] = val;
+            return;
+        }
+        let idx = index as usize;
+        if idx <= self.count {
+            self.slots[idx - 1] = val;
+        } else {
+            let next_slot = (self.count + 1).min(19);
+            self.count = next_slot;
+            self.slots[next_slot - 1] = val;
+        }
+    }
+
+    pub fn get(&self, index: i32) -> i32 {
+        if index <= 0 || (index as usize) > self.count {
+            -1
+        } else {
+            self.slots[(index - 1) as usize]
+        }
+    }
+
+    pub fn del(&mut self, index: i32) {
+        if index <= 0 || (index as usize) > self.count {
+            return;
+        }
+        let idx = (index - 1) as usize;
+        for i in idx..self.count.saturating_sub(1) {
+            self.slots[i] = self.slots[i + 1];
+        }
+        if self.count > 0 {
+            self.slots[self.count - 1] = 0;
+            self.count -= 1;
+        }
+    }
+
+    pub fn ins(&mut self, index: i32, val: i32) {
+        if index <= 0 || (index as usize) > self.count {
+            return;
+        }
+        let idx = (index - 1) as usize;
+        let new_count = (self.count + 1).min(19);
+        self.count = new_count;
+        for i in (idx + 1..self.count).rev() {
+            self.slots[i] = self.slots[i - 1];
+        }
+        self.slots[idx] = val;
+    }
+
+    pub fn play(&mut self) -> Option<i32> {
+        if self.count == 0 {
+            return None;
+        }
+        let song_id = self.slots[0];
+        for i in 0..self.count.saturating_sub(1) {
+            self.slots[i] = self.slots[i + 1];
+        }
+        self.slots[self.count - 1] = 0;
+        self.count -= 1;
+        Some(song_id)
+    }
+
+    pub fn clear(&mut self) {
+        self.slots = [0; 19];
+        self.count = 0;
+    }
+}
+
+impl std::ops::Index<usize> for KaraokePlaylist {
+    type Output = i32;
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.slots[index]
+    }
+}
+
+impl Default for KaraokePlaylist {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct KernelHost<'a> {
     pub disc_root: &'a PathBuf,
     pub canvas: &'a mut Vec<u8>,
@@ -44,7 +148,7 @@ pub struct KernelHost<'a> {
     pub sprite_cache: &'a mut HashMap<String, YbmImage>,
     pub start_time: Instant,
     pub pending_video: &'a mut Option<(String, i32, i32, Option<String>)>,
-    pub karaoke_playlist: &'a mut Vec<i32>,
+    pub karaoke_playlist: &'a mut KaraokePlaylist,
 }
 
 impl<'a> KernelHost<'a> {
@@ -91,39 +195,26 @@ impl<'a> VmHost for KernelHost<'a> {
     }
 
     fn karaoke_set(&mut self, index: i32, val: i32) {
-        let idx = if index <= 0 { 1 } else { index as usize };
-        if idx <= self.karaoke_playlist.len() {
-            self.karaoke_playlist[idx - 1] = val;
-        } else if self.karaoke_playlist.len() < 19 {
-            self.karaoke_playlist.push(val);
-        }
+        self.karaoke_playlist.set(index, val);
     }
 
     fn karaoke_get(&self, index: i32) -> i32 {
-        if index <= 0 || (index as usize) > self.karaoke_playlist.len() {
-            -1
-        } else {
-            self.karaoke_playlist[(index - 1) as usize]
-        }
+        self.karaoke_playlist.get(index)
     }
 
     fn karaoke_del(&mut self, index: i32) {
-        if index > 0 && (index as usize) <= self.karaoke_playlist.len() {
-            self.karaoke_playlist.remove((index - 1) as usize);
-        }
+        self.karaoke_playlist.del(index);
     }
 
     fn karaoke_ins(&mut self, index: i32, val: i32) {
-        if index > 0 && (index as usize) <= self.karaoke_playlist.len() && self.karaoke_playlist.len() < 19 {
-            self.karaoke_playlist.insert((index - 1) as usize, val);
-        }
+        self.karaoke_playlist.ins(index, val);
     }
 
     fn karaoke_play(&mut self) -> bool {
-        if self.karaoke_playlist.is_empty() {
-            return false;
-        }
-        let song_id = self.karaoke_playlist.remove(0);
+        let song_id = match self.karaoke_playlist.play() {
+            Some(id) => id,
+            None => return false,
+        };
         let candidates = if song_id < 10 {
             vec![
                 format!("MPEGAV/MUSIC0{}.DAT", song_id),
@@ -171,7 +262,7 @@ pub struct VcdKernel {
     pub sprite_cache: HashMap<String, YbmImage>,
     pub start_time: Instant,
     pub active_video: Option<VideoPlayer>,
-    pub karaoke_playlist: Vec<i32>,
+    pub karaoke_playlist: KaraokePlaylist,
 }
 
 impl VcdKernel {
@@ -197,7 +288,7 @@ impl VcdKernel {
             sprite_cache: HashMap::new(),
             start_time: Instant::now(),
             active_video: None,
-            karaoke_playlist: Vec::new(),
+            karaoke_playlist: KaraokePlaylist::new(),
         }
     }
 
@@ -214,6 +305,7 @@ impl VcdKernel {
         self.history_stack.clear();
         self.forward_stack.clear();
         self.sprite_cache.clear();
+        self.karaoke_playlist.clear();
 
         let cls_path = self.find_file("AUTORUN.CLS");
         let mut initial_page = "HOMEPAGE.CHM".to_string();
@@ -380,8 +472,8 @@ impl VcdKernel {
                 }
             }
 
-            if matches!(self.vm.state, VmState::WaitingForVideo) {
-                self.vm.state = VmState::Running;
+            if matches!(self.vm.state, VmState::WaitingForVideo) || self.vm.is_karaoke_video {
+                self.vm.on_video_finished();
                 self.run_vm();
             }
 
@@ -434,7 +526,9 @@ impl VcdKernel {
     pub fn is_vm_active(&self) -> bool {
         matches!(
             self.vm.state,
-            VmState::Running | VmState::WaitingForDelay { .. }
+            VmState::Running
+                | VmState::WaitingForDelay { .. }
+                | VmState::WaitingForKeyWithTimeout { .. }
         )
     }
 
@@ -516,7 +610,10 @@ impl VcdKernel {
             return self.vm.state.clone();
         }
 
-        if matches!(self.vm.state, VmState::WaitingForKey { .. }) {
+        if matches!(
+            self.vm.state,
+            VmState::WaitingForKey { .. } | VmState::WaitingForKeyWithTimeout { .. }
+        ) {
             let mut pending_video = None;
             let state = {
                 let mut host = KernelHost {

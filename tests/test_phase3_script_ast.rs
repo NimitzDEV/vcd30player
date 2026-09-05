@@ -1,4 +1,4 @@
-﻿use std::path::Path;
+use std::path::Path;
 use vcd30_player::assets::chm::CompHtmlDoc;
 use vcd30_player::core::script_ast::{BinOp, CondOp, Expr, ScriptProgram, Statement};
 
@@ -54,7 +54,8 @@ fn test_parse_simple_statements() {
             lhs: Expr::Var(b'X'),
             op: CondOp::Eq,
             rhs: Expr::Const(31),
-            stmt: Box::new(Statement::Goto(Expr::Const(100)))
+            then_stmt: Box::new(Statement::Goto(Expr::Const(100))),
+            else_stmt: None,
         }
     );
 

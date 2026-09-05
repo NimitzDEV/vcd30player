@@ -94,7 +94,8 @@ pub enum Statement {
         lhs: Expr,
         op: CondOp,
         rhs: Expr,
-        stmt: Box<Statement>,
+        then_stmt: Box<Statement>,
+        else_stmt: Option<Box<Statement>>,
     },
     ForTo {
         var: u8,
@@ -460,24 +461,37 @@ pub fn parse_single_statement(s: &str) -> Statement {
         }
     }
 
-    // IF <cond> THEN <stmt>
+    // IF <cond> THEN <then_stmt> [ELSE <else_stmt>]
     if upper.starts_with("IF") && upper.contains("THEN") {
         let then_pos = upper.find("THEN").unwrap();
         let cond_part = trimmed[2..then_pos].trim();
-        let then_part = trimmed[then_pos + 4..].trim();
+        let after_then = trimmed[then_pos + 4..].trim();
+
+        let (then_part, else_part) = if let Some(else_idx) = find_keyword_outside_quotes(after_then, "ELSE") {
+            (after_then[..else_idx].trim(), Some(after_then[else_idx + 4..].trim()))
+        } else {
+            (after_then, None)
+        };
 
         if let Some((lhs, op, rhs)) = parse_condition(cond_part) {
-            // Check if then_part is a line number shorthand: "GOTO 100" or just "100"
-            let stmt = if let Ok(target_line) = then_part.parse::<u32>() {
-                Statement::Goto(Expr::Const(target_line as i32))
-            } else {
-                parse_single_statement(then_part)
+            let parse_branch = |branch_str: &str| -> Statement {
+                let b_trim = branch_str.trim();
+                if let Ok(target_line) = b_trim.parse::<u32>() {
+                    Statement::Goto(Expr::Const(target_line as i32))
+                } else {
+                    parse_single_statement(b_trim)
+                }
             };
+
+            let then_stmt = parse_branch(then_part);
+            let else_stmt = else_part.map(parse_branch);
+
             return Statement::IfThen {
                 lhs,
                 op,
                 rhs,
-                stmt: Box::new(stmt),
+                then_stmt: Box::new(then_stmt),
+                else_stmt: else_stmt.map(Box::new),
             };
         } else {
             return Statement::Unknown {
@@ -675,3 +689,31 @@ pub fn parse_expr(s: &str) -> Option<Expr> {
 
     None
 }
+
+/// Finds the index of a case-insensitive keyword `kw` outside string quotes, respecting word boundaries.
+fn find_keyword_outside_quotes(s: &str, kw: &str) -> Option<usize> {
+    let mut in_quotes = false;
+    let bytes = s.as_bytes();
+    let kw_bytes = kw.as_bytes();
+    let kw_len = kw_bytes.len();
+
+    let mut i = 0;
+    while i + kw_len <= bytes.len() {
+        if bytes[i] == b'"' {
+            in_quotes = !in_quotes;
+            i += 1;
+            continue;
+        }
+        if !in_quotes && s[i..i + kw_len].eq_ignore_ascii_case(kw) {
+            let prev_ok = i == 0 || bytes[i - 1].is_ascii_whitespace();
+            let next_pos = i + kw_len;
+            let next_ok = next_pos == bytes.len() || bytes[next_pos].is_ascii_whitespace();
+            if prev_ok && next_ok {
+                return Some(i);
+            }
+        }
+        i += 1;
+    }
+    None
+}
+

@@ -18,6 +18,7 @@ pub const CHUNK_TYPE_BODY_STYLE: u32 = 1;
 pub const CHUNK_TYPE_IMG: u32 = 3;
 pub const CHUNK_TYPE_MAP: u32 = 11;
 pub const CHUNK_TYPE_HREF: u32 = 13;
+pub const CHUNK_TYPE_VARIABLE_TEXT: u32 = 14;
 pub const CHUNK_TYPE_BGSOUND: u32 = 15;
 pub const CHUNK_TYPE_VCDSCRIPT: u32 = 16;
 
@@ -45,6 +46,14 @@ impl fmt::Display for ChmError {
 impl std::error::Error for ChmError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MicroScriptOp {
+    pub target_var: String,
+    pub op1: String,
+    pub opcode: u32,
+    pub op2: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MapArea {
     pub area_id: u32,
     pub x1: i32,
@@ -53,6 +62,8 @@ pub struct MapArea {
     pub y2: i32,
     pub target: String,
     pub script_entry_line: Option<u32>,
+    pub is_overlay: bool,
+    pub micro_scripts: Vec<MicroScriptOp>,
 }
 
 impl MapArea {
@@ -120,6 +131,11 @@ pub enum ChunkPayload {
     Href {
         target: String,
         area: MapArea,
+    },
+    VariableText {
+        x: i32,
+        y: i32,
+        var_name: String,
     },
     VcdScript(String),
     Raw {
@@ -298,6 +314,37 @@ impl CompHtmlDoc {
                     let map_name = extract_null_terminated_str(&c_data[..32.min(c_data.len())]);
                     let mut areas = Vec::new();
 
+                    let is_overlay = if c_data.len() >= 0x44 {
+                        u32::from_be_bytes(c_data[0x40..0x44].try_into().unwrap()) != 0
+                    } else {
+                        false
+                    };
+
+                    let mut micro_scripts = Vec::new();
+                    if c_data.len() >= 0x78 {
+                        let count =
+                            u32::from_be_bytes(c_data[0x74..0x78].try_into().unwrap()) as usize;
+                        for i in 0..count {
+                            let start = 0x78 + i * 0x1c;
+                            if start + 0x1c <= c_data.len() {
+                                let item = &c_data[start..start + 0x1c];
+                                let target_var = extract_null_terminated_str(&item[0x00..0x04]);
+                                let op1 = extract_null_terminated_str(&item[0x08..0x0c]);
+                                let opcode =
+                                    u32::from_be_bytes(item[0x10..0x14].try_into().unwrap());
+                                let op2 = extract_null_terminated_str(&item[0x14..0x1c]);
+                                if !target_var.is_empty() {
+                                    micro_scripts.push(MicroScriptOp {
+                                        target_var,
+                                        op1,
+                                        opcode,
+                                        op2,
+                                    });
+                                }
+                            }
+                        }
+                    }
+
                     if c_data.len() >= 0x12c + 16 {
                         let num_points =
                             u32::from_be_bytes(c_data[0x124..0x128].try_into().unwrap()) as usize;
@@ -356,6 +403,8 @@ impl CompHtmlDoc {
                             y2: max_y,
                             target,
                             script_entry_line,
+                            is_overlay,
+                            micro_scripts,
                         });
                     }
 
@@ -430,10 +479,26 @@ impl CompHtmlDoc {
                         y2: height as i32,
                         target: clean_target.clone(),
                         script_entry_line: None,
+                        is_overlay: false,
+                        micro_scripts: Vec::new(),
                     };
                     ChunkPayload::Href {
                         target: clean_target,
                         area,
+                    }
+                }
+                CHUNK_TYPE_VARIABLE_TEXT => {
+                    if c_data.len() >= 12 {
+                        let x = i32::from_be_bytes(c_data[0x00..0x04].try_into().unwrap());
+                        let y = i32::from_be_bytes(c_data[0x04..0x08].try_into().unwrap());
+                        let var_name = extract_null_terminated_str(&c_data[0x08..0x0c]);
+                        ChunkPayload::VariableText { x, y, var_name }
+                    } else {
+                        ChunkPayload::Raw {
+                            chunk_type: c_type,
+                            flags: c_flags,
+                            data: c_data.to_vec(),
+                        }
                     }
                 }
                 CHUNK_TYPE_VCDSCRIPT => {
@@ -541,6 +606,26 @@ impl CompHtmlDoc {
                         res.push(area);
                     }
                 }
+            }
+        }
+        res
+    }
+
+    /// Returns true if this document acts as an overlay layer rather than a standalone page.
+    pub fn is_overlay(&self) -> bool {
+        self.get_background_image().is_none()
+            && self
+                .chunks
+                .iter()
+                .any(|c| matches!(c, ChunkPayload::VariableText { .. }))
+    }
+
+    /// Collects all variable text display definitions (x, y, var_name).
+    pub fn get_variable_texts(&self) -> Vec<(i32, i32, &str)> {
+        let mut res = Vec::new();
+        for chunk in &self.chunks {
+            if let ChunkPayload::VariableText { x, y, var_name } = chunk {
+                res.push((*x, *y, var_name.as_str()));
             }
         }
         res

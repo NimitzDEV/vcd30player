@@ -830,8 +830,14 @@ impl eframe::App for VcdPlayerApp {
 
                     // Debug: Draw Hotspots overlays
                     if self.show_hotspots {
+                        let mut all_areas = Vec::new();
                         if let Some(doc) = &self.kernel.current_page {
-                            for area in doc.get_all_hotspots() {
+                            all_areas.extend(doc.get_all_hotspots());
+                        }
+                        if let Some(doc) = &self.kernel.overlay_doc {
+                            all_areas.extend(doc.get_all_hotspots());
+                        }
+                        for area in all_areas {
                                 let (min_x, min_y, max_x, max_y) = area.display_bounds();
                                 let p1 = self.canvas_to_screen(
                                     min_x,
@@ -881,7 +887,6 @@ impl eframe::App for VcdPlayerApp {
                             }
                         }
                     }
-                }
-            });
+                });
     }
 }

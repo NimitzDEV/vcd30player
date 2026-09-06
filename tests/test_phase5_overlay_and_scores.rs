@@ -1,0 +1,231 @@
+mod common;
+
+use common::get_live_disc_root;
+use vcd30_player::assets::chm::{ChunkPayload, CompHtmlDoc, MapArea, MicroScriptOp};
+use vcd30_player::assets::ybm::RgbColor;
+use vcd30_player::core::kernel::{var_name_to_index, VcdKernel};
+
+#[test]
+fn test_var_name_to_index_and_micro_scripts() {
+    assert_eq!(var_name_to_index("i_a"), Some(0));
+    assert_eq!(var_name_to_index("i_b"), Some(1));
+    assert_eq!(var_name_to_index("i_e"), Some(4));
+    assert_eq!(var_name_to_index("i_f"), Some(5));
+    assert_eq!(var_name_to_index("A"), Some(0));
+    assert_eq!(var_name_to_index("e"), Some(4));
+    assert_eq!(var_name_to_index("10"), None);
+    assert_eq!(var_name_to_index(""), None);
+
+    let mut kernel = VcdKernel::new();
+    assert_eq!(kernel.get_variable_by_name("i_e"), 0);
+
+    // Test op1 + op2
+    let add_op = MicroScriptOp {
+        target_var: "i_e".to_string(),
+        op1: "i_e".to_string(),
+        opcode: 0,
+        op2: "10".to_string(),
+    };
+    kernel.execute_micro_script(&add_op);
+    assert_eq!(kernel.get_variable_by_name("i_e"), 10);
+
+    kernel.execute_micro_script(&add_op);
+    assert_eq!(kernel.get_variable_by_name("i_e"), 20);
+
+    // Test op1 - op2
+    let sub_op = MicroScriptOp {
+        target_var: "i_e".to_string(),
+        op1: "i_e".to_string(),
+        opcode: 1,
+        op2: "5".to_string(),
+    };
+    kernel.execute_micro_script(&sub_op);
+    assert_eq!(kernel.get_variable_by_name("i_e"), 15);
+
+    // Test op1 * op2
+    let mul_op = MicroScriptOp {
+        target_var: "i_e".to_string(),
+        op1: "i_e".to_string(),
+        opcode: 2,
+        op2: "2".to_string(),
+    };
+    kernel.execute_micro_script(&mul_op);
+    assert_eq!(kernel.get_variable_by_name("i_e"), 30);
+
+    // Test reset: target = "0", op2 = ""
+    let reset_op = MicroScriptOp {
+        target_var: "i_e".to_string(),
+        op1: "0".to_string(),
+        opcode: 0,
+        op2: "".to_string(),
+    };
+    kernel.execute_micro_script(&reset_op);
+    assert_eq!(kernel.get_variable_by_name("i_e"), 0);
+}
+
+#[test]
+fn test_chm_overlay_and_variable_text_rendering() {
+    let mut kernel = VcdKernel::new();
+    kernel.set_variable_by_name("i_e", 80);
+
+    let overlay_doc = CompHtmlDoc {
+        title: "SCOREV5".to_string(),
+        author: String::new(),
+        width: 352,
+        height: 288,
+        bg_color_idx: 0,
+        palette_count: 0,
+        palette: [RgbColor { r: 0, g: 0, b: 0 }; 256],
+        chunks: vec![ChunkPayload::VariableText {
+            x: 180,
+            y: 168,
+            var_name: "i_e".to_string(),
+        }],
+    };
+
+    assert!(overlay_doc.is_overlay());
+    assert_eq!(
+        overlay_doc.get_variable_texts(),
+        vec![(180, 168, "i_e")]
+    );
+
+    kernel.apply_overlay_doc(overlay_doc);
+    assert!(kernel.overlay_doc.is_some());
+
+    // Check that pixels at (180, 168) have text drawn
+    let mut black_pixels = 0;
+    for y in 168..168 + 16 {
+        for x in 180..180 + 20 {
+            let offset = ((y * 352 + x) * 4) as usize;
+            if kernel.canvas[offset] == 0
+                && kernel.canvas[offset + 1] == 0
+                && kernel.canvas[offset + 2] == 0
+                && kernel.canvas[offset + 3] == 255
+            {
+                black_pixels += 1;
+            }
+        }
+    }
+    assert!(black_pixels > 0, "Canvas must have glyph pixels drawn");
+}
+
+#[test]
+fn test_live_disc_score05x_and_scorev5_flow() {
+    let disc_root = match get_live_disc_root() {
+        Some(p) => p,
+        None => {
+            eprintln!("No live disc detected, skipping real disc test");
+            return;
+        }
+    };
+
+    let mut kernel = VcdKernel::new();
+    if kernel.open_disc(disc_root).is_err() {
+        return;
+    }
+
+    if kernel.find_file("SCORE05X.CHM").is_none() || kernel.find_file("SCOREV5.CHM").is_none() {
+        eprintln!("Disc does not contain SCORE05X.CHM or SCOREV5.CHM, skipping");
+        return;
+    }
+
+    // 1. Simulate answering questions to reach 80 points
+    kernel.set_variable_by_name("i_e", 80);
+
+    // 2. Load SCORE05X.CHM (base page)
+    kernel.load_page("SCORE05X.CHM", false).expect("Load SCORE05X.CHM");
+    assert_eq!(kernel.current_page_name, "SCORE05X.CHM");
+    assert!(kernel.overlay_doc.is_none());
+
+    // Count non-black pixels from background image SCORE01.YBM
+    let non_black_before = kernel
+        .canvas
+        .chunks_exact(4)
+        .filter(|c| c[0] > 10 || c[1] > 10 || c[2] > 10)
+        .count();
+    assert!(
+        non_black_before > 50000,
+        "SCORE05X base page must display background image"
+    );
+
+    // 3. Hit test hotspot to SCOREV5.CHM: pt[0]=(93, 153), pt[1]=(152, 179)
+    let hit_area: MapArea = (*kernel.hit_test(120, 166).expect("Must hit SCOREV5 hotspot")).clone();
+    assert_eq!(hit_area.target, "SCOREV5.CHM");
+    assert!(hit_area.is_overlay, "Hotspot must have overlay flag = true");
+
+    // 4. Activate hotspot -> loads SCOREV5 as an overlay
+    let activated = kernel.activate_hotspot(&hit_area).expect("Activate hotspot");
+    assert!(activated);
+    assert!(kernel.overlay_doc.is_some(), "Overlay doc must be active");
+    assert_eq!(
+        kernel.current_page_name, "SCORE05X.CHM",
+        "Base page name must be preserved"
+    );
+
+    // 5. Verify screen is NOT blank black
+    let non_black_after = kernel
+        .canvas
+        .chunks_exact(4)
+        .filter(|c| c[0] > 10 || c[1] > 10 || c[2] > 10)
+        .count();
+    assert!(
+        non_black_after > 50000,
+        "Screen must retain base background when overlay is active"
+    );
+
+    // 6. Verify base page hotspots remain clickable (GAME.CHM at pt=(131, 33)..(236, 72))
+    let exit_hit: MapArea = (*kernel.hit_test(180, 50).expect("Must hit base page GAME.CHM hotspot")).clone();
+    assert_eq!(exit_hit.target, "GAME.CHM");
+
+    // 7. Clicking GAME.CHM dismisses overlay and navigates to GAME.CHM
+    kernel.activate_hotspot(&exit_hit).expect("Activate GAME.CHM");
+    assert!(kernel.overlay_doc.is_none(), "Overlay must be cleared on navigation");
+    assert_eq!(kernel.current_page_name, "GAME.CHM");
+}
+
+#[test]
+fn test_live_disc_game051_answer_score_accumulation() {
+    let disc_root = match get_live_disc_root() {
+        Some(p) => p,
+        None => return,
+    };
+
+    let mut kernel = VcdKernel::new();
+    if kernel.open_disc(disc_root).is_err() {
+        return;
+    }
+
+    if kernel.find_file("GAME051.CHM").is_none() {
+        return;
+    }
+
+    kernel.load_page("GAME051.CHM", false).expect("Load GAME051.CHM");
+    kernel.set_variable_by_name("i_e", 0);
+
+    let (correct_area, exit_area): (MapArea, MapArea) = {
+        let doc = kernel.current_page.as_ref().unwrap();
+        let hotspots = doc.get_all_hotspots();
+
+        // Area 6 is the correct answer with micro-script `i_e += 10`
+        let correct = (*hotspots
+            .iter()
+            .find(|a| a.micro_scripts.iter().any(|s| s.target_var == "i_e" && s.op2 == "10"))
+            .expect("Must find correct answer hotspot with micro_script"))
+        .clone();
+
+        // Area 0 is the exit button to GAME.CHM which resets `i_e = 0`
+        let exit = (*hotspots
+            .iter()
+            .find(|a| a.micro_scripts.iter().any(|s| s.target_var == "i_e" && s.op1 == "0" && s.op2.is_empty()))
+            .expect("Must find exit button hotspot with reset micro_script"))
+        .clone();
+
+        (correct, exit)
+    };
+
+    kernel.activate_hotspot(&correct_area).expect("Activate correct answer");
+    assert_eq!(kernel.get_variable_by_name("i_e"), 10, "Score must increase by 10");
+
+    kernel.activate_hotspot(&exit_area).expect("Activate exit button");
+    assert_eq!(kernel.get_variable_by_name("i_e"), 0, "Score must reset to 0 on exit");
+}

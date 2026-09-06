@@ -1,6 +1,6 @@
 //! VCD 3.0 Interactive Kernel and Page Navigation State Machine.
 
-use crate::assets::chm::{ChunkPayload, CompHtmlDoc, MapArea};
+use crate::assets::chm::{ChunkPayload, CompHtmlDoc, MapArea, MicroScriptOp};
 use crate::assets::cls::AutoRunConfig;
 use crate::assets::ybm::YbmImage;
 use crate::audio::AudioManager;
@@ -14,6 +14,55 @@ use std::time::Instant;
 
 pub const CANVAS_WIDTH: u32 = 352;
 pub const CANVAS_HEIGHT: u32 = 288;
+
+const FONT_8X16_DIGITS: [[u8; 16]; 10] = [
+    // '0'
+    [0x00, 0x3c, 0x66, 0x66, 0x6e, 0x76, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x3c, 0x00, 0x00, 0x00],
+    // '1'
+    [0x00, 0x18, 0x38, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x7e, 0x00, 0x00, 0x00],
+    // '2'
+    [0x00, 0x3c, 0x66, 0x06, 0x06, 0x0c, 0x18, 0x30, 0x60, 0x60, 0x66, 0x7e, 0x7e, 0x00, 0x00, 0x00],
+    // '3'
+    [0x00, 0x3c, 0x66, 0x06, 0x06, 0x1c, 0x06, 0x06, 0x06, 0x06, 0x66, 0x3c, 0x00, 0x00, 0x00, 0x00],
+    // '4'
+    [0x00, 0x0c, 0x1c, 0x3c, 0x6c, 0xcc, 0xfe, 0x0c, 0x0c, 0x0c, 0x0c, 0x1e, 0x00, 0x00, 0x00, 0x00],
+    // '5'
+    [0x00, 0x7e, 0x60, 0x60, 0x7c, 0x66, 0x06, 0x06, 0x06, 0x66, 0x66, 0x3c, 0x00, 0x00, 0x00, 0x00],
+    // '6'
+    [0x00, 0x1c, 0x30, 0x60, 0x60, 0x7c, 0x66, 0x66, 0x66, 0x66, 0x66, 0x3c, 0x00, 0x00, 0x00, 0x00],
+    // '7'
+    [0x00, 0x7e, 0x66, 0x06, 0x0c, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x00, 0x00, 0x00, 0x00],
+    // '8'
+    [0x00, 0x3c, 0x66, 0x66, 0x66, 0x3c, 0x66, 0x66, 0x66, 0x66, 0x66, 0x3c, 0x00, 0x00, 0x00, 0x00],
+    // '9'
+    [0x00, 0x3c, 0x66, 0x66, 0x66, 0x66, 0x3e, 0x06, 0x06, 0x0c, 0x18, 0x30, 0x00, 0x00, 0x00, 0x00],
+];
+
+const FONT_8X16_MINUS: [u8; 16] = [
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7e, 0x7e, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
+const FONT_8X16_PLUS: [u8; 16] = [
+    0x00, 0x00, 0x00, 0x18, 0x18, 0x18, 0x7e, 0x7e, 0x18, 0x18, 0x18, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
+/// Maps variable names like "i_a".."i_f" or single letter "a".."z" to index 0..25.
+pub fn var_name_to_index(var: &str) -> Option<usize> {
+    let trimmed = var.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let ch = if (trimmed.starts_with("i_") || trimmed.starts_with("I_")) && trimmed.len() >= 3 {
+        trimmed.chars().nth(2)?
+    } else {
+        trimmed.chars().next()?
+    };
+    if ch.is_ascii_alphabetic() {
+        Some((ch.to_ascii_lowercase() as u8 - b'a') as usize)
+    } else {
+        None
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KernelError {
@@ -251,6 +300,7 @@ pub struct VcdKernel {
     pub current_page_name: String,
     pub current_page: Option<CompHtmlDoc>,
     pub current_bg_image: Option<YbmImage>,
+    pub overlay_doc: Option<CompHtmlDoc>,
     pub canvas: Vec<u8>,
     pub history_stack: Vec<String>,
     pub forward_stack: Vec<String>,
@@ -276,6 +326,7 @@ impl VcdKernel {
             current_page_name: String::new(),
             current_page: None,
             current_bg_image: None,
+            overlay_doc: None,
             canvas,
 
             history_stack: Vec::new(),
@@ -289,6 +340,168 @@ impl VcdKernel {
             start_time: Instant::now(),
             active_video: None,
             karaoke_playlist: KaraokePlaylist::new(),
+        }
+    }
+
+    pub fn get_variable_by_name(&self, var_name: &str) -> i32 {
+        if let Some(idx) = var_name_to_index(var_name) {
+            self.vm.variables[idx]
+        } else {
+            0
+        }
+    }
+
+    pub fn set_variable_by_name(&mut self, var_name: &str, val: i32) {
+        if let Some(idx) = var_name_to_index(var_name) {
+            self.vm.variables[idx] = val;
+        }
+    }
+
+    fn eval_micro_script_operand(&self, s: &str) -> i32 {
+        let trimmed = s.trim();
+        if trimmed.is_empty() {
+            return 0;
+        }
+        if let Some(idx) = var_name_to_index(trimmed) {
+            if trimmed.starts_with("i_")
+                || trimmed.starts_with("I_")
+                || (trimmed.len() == 1 && trimmed.chars().next().unwrap().is_ascii_alphabetic())
+            {
+                return self.vm.variables[idx];
+            }
+        }
+        trimmed.parse::<i32>().unwrap_or(0)
+    }
+
+    pub fn execute_micro_script(&mut self, op: &MicroScriptOp) {
+        let op1_val = self.eval_micro_script_operand(&op.op1);
+        let op2_val = self.eval_micro_script_operand(&op.op2);
+        let res = if op.op2.trim().is_empty() {
+            op1_val
+        } else {
+            match op.opcode {
+                0 => op1_val.saturating_add(op2_val),
+                1 => op1_val.saturating_sub(op2_val),
+                2 => op1_val.saturating_mul(op2_val),
+                3 => {
+                    if op2_val != 0 {
+                        op1_val / op2_val
+                    } else {
+                        0
+                    }
+                }
+                _ => op1_val,
+            }
+        };
+        self.set_variable_by_name(&op.target_var, res);
+    }
+
+    pub fn draw_char_on_canvas(&mut self, x: i32, y: i32, ch: char, color: [u8; 4]) {
+        let glyph = match ch {
+            '0'..='9' => &FONT_8X16_DIGITS[(ch as u8 - b'0') as usize],
+            '-' => &FONT_8X16_MINUS,
+            '+' => &FONT_8X16_PLUS,
+            _ => return,
+        };
+
+        for row in 0..16 {
+            let py = y + row;
+            if py < 0 || py >= CANVAS_HEIGHT as i32 {
+                continue;
+            }
+            let mask = glyph[row as usize];
+            for col in 0..8 {
+                if (mask & (1 << (7 - col))) != 0 {
+                    let px = x + col;
+                    if px >= 0 && px < CANVAS_WIDTH as i32 {
+                        let offset = ((py as u32 * CANVAS_WIDTH + px as u32) * 4) as usize;
+                        if offset + 4 <= self.canvas.len() {
+                            self.canvas[offset..offset + 4].copy_from_slice(&color);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn draw_string_on_canvas(&mut self, x: i32, y: i32, text: &str, color: [u8; 4]) {
+        let mut curr_x = x;
+        for ch in text.chars() {
+            if ch == ' ' {
+                curr_x += 8;
+                continue;
+            }
+            self.draw_char_on_canvas(curr_x, y, ch, color);
+            curr_x += 9;
+        }
+    }
+
+    /// Applies an overlay document on top of the current base page without wiping the canvas.
+    pub fn apply_overlay_doc(&mut self, doc: CompHtmlDoc) {
+        // 1. Re-blit base image if available to erase previous overlay drawings
+        if let Some(ybm) = &self.current_bg_image {
+            ybm.blit_to_rgba_canvas(
+                &mut self.canvas,
+                CANVAS_WIDTH,
+                CANVAS_HEIGHT,
+                0,
+                0,
+                None,
+            );
+        }
+
+        // 2. Render any variable text elements onto canvas
+        for (x, y, var_name) in doc.get_variable_texts() {
+            let val = self.get_variable_by_name(var_name);
+            let text = format!("{}", val);
+            self.draw_string_on_canvas(x, y, &text, [0, 0, 0, 255]);
+        }
+
+        // 3. Play any overlay BGSOUND if defined
+        if let Some((snd_name, loop_count)) = doc.get_background_sound_info() {
+            if let Some(snd_path) = self.find_file(snd_name) {
+                self.audio.play_bgm_file(snd_path, loop_count);
+            }
+        }
+
+        // 4. Run any overlay script if defined
+        if let Some(script_code) = doc.get_script() {
+            let prog = ScriptProgram::parse(script_code);
+            self.vm.load_program(prog);
+            self.run_vm();
+        }
+
+        self.overlay_doc = Some(doc);
+    }
+
+    /// Loads an overlay page from disc by CHM filename and composites it on current base page.
+    pub fn load_overlay_page(&mut self, chm_name: &str) -> Result<(), KernelError> {
+        let path = self
+            .find_file(chm_name)
+            .ok_or_else(|| KernelError::FileNotFound(PathBuf::from(chm_name)))?;
+
+        let bytes = std::fs::read(&path).map_err(|e| KernelError::ChmParseError(e.to_string()))?;
+        let doc =
+            CompHtmlDoc::parse(&bytes).map_err(|e| KernelError::ChmParseError(e.to_string()))?;
+
+        self.apply_overlay_doc(doc);
+        Ok(())
+    }
+
+    /// Dismisses any active overlay and restores base canvas.
+    pub fn dismiss_overlay(&mut self) {
+        if self.overlay_doc.is_some() {
+            self.overlay_doc = None;
+            if let Some(ybm) = &self.current_bg_image {
+                ybm.blit_to_rgba_canvas(
+                    &mut self.canvas,
+                    CANVAS_WIDTH,
+                    CANVAS_HEIGHT,
+                    0,
+                    0,
+                    None,
+                );
+            }
         }
     }
 
@@ -350,6 +563,13 @@ impl VcdKernel {
         let bytes = std::fs::read(&path).map_err(|e| KernelError::ChmParseError(e.to_string()))?;
         let doc =
             CompHtmlDoc::parse(&bytes).map_err(|e| KernelError::ChmParseError(e.to_string()))?;
+
+        if doc.is_overlay() {
+            self.apply_overlay_doc(doc);
+            return Ok(());
+        }
+
+        self.overlay_doc = None;
 
         if push_history && !self.current_page_name.is_empty() {
             self.history_stack.push(self.current_page_name.clone());
@@ -535,6 +755,19 @@ impl VcdKernel {
     }
 
     pub fn hit_test(&self, x: i32, y: i32) -> Option<&MapArea> {
+        // If an overlay document is active, prioritize its hotspots
+        if let Some(overlay) = &self.overlay_doc {
+            let overlay_hotspots = overlay.get_all_hotspots();
+            for area in overlay_hotspots {
+                if !area.is_point_hotspot() {
+                    let (min_x, min_y, max_x, max_y) = area.raw_bounds();
+                    if x >= min_x && x <= max_x && y >= min_y && y <= max_y {
+                        return Some(area);
+                    }
+                }
+            }
+        }
+
         let doc = self.current_page.as_ref()?;
         let all_hotspots = doc.get_all_hotspots();
 
@@ -573,6 +806,11 @@ impl VcdKernel {
     }
 
     pub fn activate_hotspot(&mut self, area: &MapArea) -> Result<bool, KernelError> {
+        // Execute any micro-scripts attached to this hotspot
+        for op in &area.micro_scripts {
+            self.execute_micro_script(op);
+        }
+
         // If hotspot routes to a VCDSCRIPT line
         if let Some(line) = area.script_entry_line {
             self.vm.start_at_line(line);
@@ -587,7 +825,11 @@ impl VcdKernel {
         }
 
         if target.to_uppercase().ends_with(".CHM") && target != ".CHM" {
-            self.load_page(target, true)?;
+            if area.is_overlay {
+                self.load_overlay_page(target)?;
+            } else {
+                self.load_page(target, true)?;
+            }
             return Ok(true);
         }
 
@@ -683,6 +925,10 @@ impl VcdKernel {
     }
 
     pub fn go_back(&mut self) -> Result<bool, KernelError> {
+        if self.overlay_doc.is_some() {
+            self.dismiss_overlay();
+            return Ok(true);
+        }
         if let Some(prev) = self.history_stack.pop() {
             self.forward_stack.push(self.current_page_name.clone());
             self.load_page(&prev, false)?;

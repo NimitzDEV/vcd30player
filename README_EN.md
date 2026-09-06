@@ -5,80 +5,122 @@
 [![License](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 [![Tests](https://img.shields.io/badge/Tests-47%20Passed-brightgreen.svg)](#testing)
 
-**vcd30player** is a modern, cross-platform interactive media player for **VCD 3.0 format discs** written in safe Rust.
+**A modern, cross-platform VCD 3.0 player written in Rust.**
+
+vcd30player is an open-source reimplementation of the **VCD 3.0 interactive CD-ROM environment**, bringing interactive VCD 3.0 content from the late 1990s back to modern Windows, macOS, and Linux.
+
+> **No Windows 98. No virtual machine. No original player required.**
 
 [简体中文文档](README.md)
 
 ---
 
-## 📖 Introduction
+## What is VCD 3.0?
 
-This project is used to play VCD 3.0 format optical discs.
+VCD 3.0 was an extended VCD format developed in the late 1990s, adding interactive multimedia capabilities on top of conventional VCD playback.
 
-VCD 3.0 builds upon traditional Video CD playback by adding interactive, page-based menus and scripting:
-- **`<COMPHTML>` (.CHM)**: Compiled page files defining visual layouts, button hotspots, and routing logic;
-- **`<YUVBMP>` (.YBM)**: 8-bit indexed YUV palette image files compliant with ITU-R BT.601;
-- **VCDSCRIPT**: An embedded BASIC-like script engine for handling user input, timing delays, variable computation, and navigation;
-- **Audio and Video**: Works alongside MPEG-1 video (`.DAT`) and background audio (`.WAV`) to provide menu navigation, karaoke track selection, and interactive features.
+Unlike ordinary VCDs, a VCD 3.0 disc can contain:
 
-Original 16/32-bit executables cannot run natively on modern 64-bit platforms (Windows 10/11, macOS, Linux). This project provides a cross-platform playback engine implemented in safe Rust, allowing these discs to be played directly on modern computers without virtual machines.
+* Interactive menus and clickable regions
+* Compiled HTML-like pages (`.CHM`)
+* Indexed/paletted images (`.YBM`)
+* Embedded scripts and navigation logic
+* MPEG-1 video (`.DAT`)
+* Background music and sound effects (`.WAV`)
+* Karaoke and other interactive applications
 
----
+The original software stack depended on Windows-era multimedia components and proprietary runtime software that are no longer available on modern systems.
 
-## ✨ Key Features
-
-- **Disc Files & Format Decoders**
-  - **CHM Page Parser**: Parses `<COMPHTML>` binaries, extracting metadata, palettes, layer chunks, full-screen/polygonal/rectangular hotspots, and embedded VCDSCRIPT code.
-  - **YBM Image Decoder**: Decodes ITU-R BT.601 palette bitmaps into RGBA framebuffers; supports sub-image sprite blitting.
-  - **CLS Config Decoder**: Parses `PROGRAM/JAVA/AUTORUN.CLS` for disc entry points, cover graphics, and opening videos.
-- **VCDSCRIPT Virtual Machine**
-  - Integrated tokenizer and AST parser handling arithmetic operations, control flows (`IF...THEN...ELSE`), and subroutines (`GOTO`, `GOSUB/RETURN`).
-  - Coroutine/state machine architecture supporting 100ms-calibrated timers (`CALL TIME`), remote key waits with timeout fallback (`CALL IRKEY`), and pseudorandom generators (`CALL RAND`).
-  - Karaoke subsystem supporting 19-slot playlist registers (`KARAOKE SET/GET/DEL/INS/PLAY`) with sequential and queued playback modes.
-- **Media Decoding & A/V Sync**
-  - **CD-XA Demuxer**: Demultiplexes RIFF CD-XA Mode 2 Form 2 interleaved multimedia packets.
-  - **MPEG-1 Decoding**: Integrated `pl_mpeg` decoder supporting real-time video playback, seek bar controls, pause/resume, and 4:3 aspect-ratio preservation.
-  - **Audio Pipeline**: Supports background loop audio (BGSOUND) and immediate WAV sound effects triggered by button clicks.
-- **User Interface & Controls (`egui`)**
-  - Interactive virtual remote control (D-pad, numeric keys, enter, exit, volume).
-  - Bottom toolbar with disc load/eject SplitButton and runtime reset capability.
-  - Debugging overlays: interactive hotspot visualization, OSD cursor indicator, and graceful error alerts for unknown instructions.
-- **Self-contained Testing**
-  - Packaged with a self-contained 300KB mock disc fixture (`tests/fixtures/mock_disc`), allowing 100% test pass rates without external physical drives.
+**vcd30player aims to preserve this software ecosystem without emulating the entire old PC.**
 
 ---
 
-## 🛠️ Build & Run
+## ✨ Features
 
-### Prerequisites
+### Disc & Format Support
 
-- **Rust Toolchain**: Rust 1.80+ (2024 Edition)
-- **C Compiler**: MSVC (Windows) or GCC / Clang (Linux / macOS)
+* VCD 3.0 disc/directory detection
+* `<COMPHTML>` / `.CHM` parsing
+* `.YBM` image decoding
+* `AUTORUN.CLS` analysis
+* VCD navigation and resource loading
 
-### Build from Source
+### Interactive Runtime
+
+* VCD 3.0 page rendering
+* Interactive button/hotspot regions
+* Embedded script execution
+* Keyboard and virtual remote-control input
+* Timers, navigation, and state management
+* Karaoke command support
+
+### Audio & Video
+
+* CD-XA demultiplexing
+* MPEG-1 video playback
+* Aspect-ratio correction (4:3)
+* Background music playback
+* WAV sound effects
+* Video/audio synchronization
+
+### Modern Runtime
+
+* Written entirely in modern safe Rust
+* Runs directly on modern 64-bit operating systems (Windows, macOS, Linux)
+* No Windows 9x environment required
+* No legacy player installation required
+* Designed to be cross-platform
+
+---
+
+## 💾 Download Pre-built Binaries
+
+If you simply want to run the player without installing Rust or setting up a development environment, download the latest standalone pre-built binaries for your platform:
+
+👉 **[Download from GitHub Releases](https://github.com/NimitzDEV/vcd30player/releases)**
+
+* **Windows**: Download `vcd30player-v*-windows-x64.zip`, extract, and double-click `vcd30_player.exe`.
+* **Linux**: Download `vcd30player-v*-linux-x64.tar.gz`, extract, and run.
+
+---
+
+## 🛠️ Local Development & Building from Source
+
+If you wish to contribute to development, debug features, or build the player manually from source, follow the instructions below:
+
+### Requirements
+
+* Rust 1.80+ (2024 Edition)
+* A C compiler:
+  * MSVC on Windows
+  * GCC or Clang on Linux/macOS
+
+### Build
 
 ```bash
-# Clone repository with submodules
 git clone --recurse-submodules https://github.com/NimitzDEV/vcd30player.git
 cd vcd30player
 
-# If cloned without --recurse-submodules, initialize them manually:
-git submodule update --init --recursive
-
-# Build debug binary
-cargo build
-
-# Build optimized release binary
 cargo build --release
 ```
 
-### Run the Player
+If the repository was cloned without submodules:
 
 ```bash
-# Launch player GUI
-cargo run --release
+git submodule update --init --recursive
+```
 
-# Launch and load disc directly
+### Run
+
+Start the player GUI:
+
+```bash
+cargo run --release
+```
+
+Or specify a mounted disc / extracted VCD directory:
+
+```bash
 cargo run --release -- "D:\"
 ```
 
@@ -86,55 +128,74 @@ cargo run --release -- "D:\"
 
 ## 🧪 Testing
 
-The project comes with a comprehensive test suite of 47 tests:
+The project includes unit and integration tests with a small self-contained test fixture, so all tests can run without a physical VCD.
 
 ```bash
-# Run all tests using self-contained fixtures
 cargo test
 ```
 
-### Test Against Live Physical Media
-
-To test against an actual mounted disc volume:
+To run extended tests against a real disc:
 
 ```powershell
-# Windows (PowerShell)
-$env:VCD_TEST_DISC = "D:\"; cargo test
+$env:VCD_TEST_DISC = "D:\"
+cargo test
 ```
 
+Linux/macOS:
+
 ```bash
-# Linux / macOS (Bash)
 VCD_TEST_DISC="/media/cdrom" cargo test
 ```
 
 ---
 
-## 📂 Repository Structure
+## 🔬 Format Analysis & Architecture
+
+This project started from the investigation of a real VCD 3.0 disc whose original player software no longer works on modern systems.
+
+The project is progressively replacing the original legacy runtime with modern, documented implementations of the underlying formats and execution environment.
+
+Target formats and pipeline:
+
+```text
+VCD 3.0 disc
+    │
+    ├── CHM / COMPHTML
+    ├── YBM / YUVBMP
+    ├── CLS / Java bytecode
+    ├── VCD scripts
+    └── MPEG / CD-XA
+            │
+            ▼
+      Modern VCD 3.0 Runtime
+```
+
+The long-term goal is not to reproduce the original Windows environment, but to **reimplement the semantics required to run VCD 3.0 content directly**.
+
+---
+
+## 📁 Project Structure
 
 ```text
 vcd30player/
 ├── .github/
+│   ├── ISSUE_TEMPLATE/    # Bug report and feature request templates
 │   ├── workflows/
 │   │   ├── ci.yml         # Automated continuous integration and test
 │   │   └── release.yml    # Automated multi-platform release binary packaging
-├── c_src/                 # C bridge code (pl_mpeg_impl.c)
-├── vendor/
-│   └── pl_mpeg/           # Git Submodule (upstream phoboslab/pl_mpeg)
+│   └── PULL_REQUEST_TEMPLATE.md
 ├── src/
-│   ├── assets/            # CHM, YBM, CLS format decoders
-│   ├── audio/             # Audio mixer and sound effect player
-│   ├── core/              # Kernel state machine, VCDSCRIPT AST and VM
-│   ├── ui/                # egui user interface and remote control
-│   ├── video/             # CD-XA demuxer and MPEG video playback
-│   ├── lib.rs             # Library exports
-│   └── main.rs            # Application entry point
-├── tests/
-│   ├── common/            # Shared test disc resolution
-│   ├── fixtures/          # Curated, copyright-clean mock disc fixtures
-│   └── *.rs               # Phase 1 to Phase 4 integration tests
+│   ├── assets/            # CHM / YBM / CLS format handling
+│   ├── audio/             # Audio playback and mixing
+│   ├── core/              # Runtime, scripts and application state
+│   ├── ui/                # egui interface and virtual remote
+│   └── video/             # CD-XA and MPEG playback
+├── c_src/                 # C bridge for MPEG decoding
+├── vendor/                # Git submodule (phoboslab/pl_mpeg)
+├── tests/                 # Unit/integration tests and fixtures
 ├── Cargo.toml
-├── CHANGELOG.md           # Version changelog
-├── CONTRIBUTING.md        # Contribution guidelines
+├── CHANGELOG.md
+├── CONTRIBUTING.md
 ├── LICENSE-APACHE
 ├── LICENSE-MIT
 ├── README.md              # Chinese Documentation
@@ -143,16 +204,34 @@ vcd30player/
 
 ---
 
+## 🤝 Contributing
+
+VCD 3.0 is a largely undocumented and poorly preserved multimedia format. If you have:
+
+* VCD 3.0 discs
+* Original VCD 3.0 player software
+* Documentation or specifications
+* Format analysis findings
+* Format samples
+* Compatibility information
+
+they can be extremely useful for the project.
+
+Issues, pull requests, format research, and compatibility reports are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before submitting contributions.
+
+---
+
 ## ⚠️ Disclaimer
 
-This project is intended strictly as an interactive media player and compatibility runtime for VCD 3.0 format discs:
-- This repository does not contain or distribute any copyrighted commercial disc content (such as movies, music, or video games).
-- Users are expected to supply their own lawfully acquired discs or legitimate backups when using this software.
+This project does **not** distribute commercial VCD content, copyrighted media, or original commercial discs.
+
+Use the player with discs or backups that you have the legal right to use.
 
 ---
 
 ## 📜 License
 
-This project is dual-licensed under:
-- [MIT License](LICENSE-MIT) or
-- [Apache License, Version 2.0](LICENSE-APACHE)
+Licensed under either of:
+
+* [MIT License](LICENSE-MIT)
+* [Apache License, Version 2.0](LICENSE-APACHE)

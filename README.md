@@ -5,80 +5,122 @@
 [![License](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](#开源协议)
 [![Tests](https://img.shields.io/badge/Tests-47%20Passed-brightgreen.svg)](#测试指南)
 
-**vcd30player** 是一个使用现代 Rust 语言编写的 **VCD 3.0 格式光盘** 跨平台交互播放器。
+**基于 Rust 编写的现代化跨平台 VCD 3.0 播放器。**
+
+vcd30player 是 **VCD 3.0 交互式光盘环境** 的开源现代重实现，让诞生于 20 世纪 90 年代末的 VCD 3.0 互动多媒体光盘能够免除繁琐配置，直接在现代 Windows、macOS 与 Linux 系统上重获新生。
+
+> **无需 Windows 98，无需虚拟机，亦无需安装原版老旧播放软件。**
 
 [English Documentation](README_EN.md)
 
 ---
 
-## 📖 项目介绍
+## 什么是 VCD 3.0？
 
-本项目用于播放 VCD 3.0 格式光盘。
+VCD 3.0 是 20 世纪 90 年代末在传统 VCD 视频播放基础上发展出的一种扩展多媒体光盘格式，加入了基于页面的交互能力。
 
-VCD 3.0 是在传统 VCD 视频播放的基础上，增加了基于页面的菜单与交互能力的一种光盘格式：
-- **`<COMPHTML>` (.CHM)**：编译后的页面文件，包含界面布局、按钮热区及交互跳转逻辑；
-- **`<YUVBMP>` (.YBM)**：基于 ITU-R BT.601 规范的 8-bit YUV 调色板图像文件；
-- **VCDSCRIPT**：光盘内置的类 BASIC 脚本引擎，用于处理按键输入、延时控制、变量计算和流程跳转；
-- **视频与音频**：配合光盘内的 MPEG-1 视频（`.DAT`）和背景音频（`.WAV`），实现菜单导航、卡拉OK点歌、答题互动等功能。
+与普通的 VCD 光盘不同，一张 VCD 3.0 光盘通常包含：
 
-早期光盘自带的 16/32 位播放程序在现代 64 位操作系统（Windows 10/11、macOS、Linux）上已无法正常运行。本项目使用现代 Rust 语言实现了该格式的跨平台播放引擎，让光盘可以在现代电脑上免虚拟机直接运行播放。
+* 交互式菜单与可点击热区
+* 类似 HTML 编译后的页面文件（`.CHM`）
+* 索引与调色板图像（`.YBM`）
+* 内嵌的流程控制脚本与跳转逻辑
+* MPEG-1 格式视频（`.DAT`）
+* 背景音乐与按键音效（`.WAV`）
+* 卡拉OK点歌及其他互动应用程序
 
----
+原始软件依赖旧时代 Windows 的多媒体组件及专有运行时，在现代操作系统上早已无法运行。
 
-## ✨ 核心特性
-
-- **光盘文件与格式解析**
-  - **CHM 页面解析**：支持 `<COMPHTML>` 二进制文件解析，读取页面元数据、调色板、图层块、全屏/多边形/矩形按钮热区以及内嵌脚本。
-  - **YBM 图像解码**：支持 ITU-R BT.601 标准调色板转 RGBA 显示，支持精灵图（Sprite）局部绘制。
-  - **CLS 启动配置**：读取 `PROGRAM/JAVA/AUTORUN.CLS`，自动识别封面图、开机片头视频与主页。
-- **VCDSCRIPT 脚本引擎**
-  - 完整的语法解析与抽象语法树（AST），支持基本算术运算、条件分支（`IF...THEN...ELSE`）与子程序跳转（`GOTO`, `GOSUB/RETURN`）。
-  - 基于协程与状态机的执行机制，原生支持延时控制（`CALL TIME`，以 100ms 为单位）、遥控器按键等待与超时返回（`CALL IRKEY`）、随机数生成（`CALL RAND`）。
-  - 完整实现卡拉OK指令集（`KARAOKE SET/GET/DEL/INS/PLAY`），支持 19 槽位歌曲列表管理、顺序点播与切歌。
-- **音视频解码与同步**
-  - **CD-XA 解复用**：支持光盘 RIFF CD-XA 格式音视频数据分离。
-  - **MPEG-1 视频播放**：集成轻量级视频解码库（`pl_mpeg`），支持播放、暂停、进度条拖拽、画面比例自适应（4:3 保持）。
-  - **音频播放与音效混音**：支持页面背景音频（BGSOUND）循环播放，以及按钮点击触发的即时短音效（WAV）。
-- **界面与交互操作 (`egui`)**
-  - 虚拟遥控器面板：提供数字按键、方向键、确认/返回键与音量调节。
-  - 底部操作栏：支持直接加载光盘目录、加载单个 CHM 页面、弹出光盘及一键重置（Reset）。
-  - 调试辅助：支持热区高亮显示开关、遥控器光标显示、未识别指令弹窗容错。
-- **自动化测试支持**
-  - 自带约 300KB 的无版权测试样本（`tests/fixtures/mock_disc`），不需要挂载任何物理光盘即可在本地和 CI 环境中一键跑通全部 47 项测试。
+**vcd30player 的目标是在不模拟整台旧电脑的前提下，完整保护并还原这一软件生态。**
 
 ---
 
-## 🛠️ 编译与运行
+## ✨ 功能特性
 
-### 环境要求
+### 光盘与格式支持
 
-- **Rust 工具链**：Rust 1.80+ (2024 Edition)
-- **C 编译器**：MSVC (Windows) 或 GCC / Clang (Linux / macOS)
+* VCD 3.0 光盘 / 目录自动识别
+* `<COMPHTML>` / `.CHM` 页面解析
+* `.YBM` 调色板图像高效解码
+* `AUTORUN.CLS` 启动配置分析
+* 光盘资源加载与多层级页面路由
+
+### 交互运行时
+
+* VCD 3.0 页面排版与渲染
+* 交互式按钮与多边形热区响应
+* 内嵌脚本解释与虚拟机执行
+* 键盘快捷键与虚拟遥控器操作
+* 定时延时、流程跳转与变量状态管理
+* 完整支持卡拉OK点歌指令集
+
+### 音频与视频
+
+* CD-XA 扇区音视频解复用
+* MPEG-1 视频流畅播放
+* 4:3 画面显示比例校正
+* 背景音乐循环播放
+* WAV 即时按钮音效
+* 基于时间戳（PTS）的音画同步
+
+### 现代技术栈
+
+* 全程基于现代安全 Rust 语言与生态打造
+* 直接原生运行于现代 64 位操作系统（Windows, macOS, Linux）
+* 无需 Windows 9x 兼容环境
+* 无需安装任何历史遗留播放程序
+* 跨平台原生架构设计
+
+---
+
+## 💾 下载预编译版本 (Pre-built Binaries)
+
+如果您只想直接播放光盘，无需安装 Rust 编译环境，可直接前往 Releases 页面下载为您操作系统构建的免安装绿色版本：
+
+👉 **[前往 GitHub Releases 下载最新版本](https://github.com/NimitzDEV/vcd30player/releases)**
+
+* **Windows**: 下载 `vcd30player-v*-windows-x64.zip`，解压后双击 `vcd30_player.exe` 即可直接运行。
+* **Linux**: 下载 `vcd30player-v*-linux-x64.tar.gz` 解压运行。
+
+---
+
+## 🛠️ 本地开发与从源码构建
+
+如果您希望参与项目开发、调试功能，或自行从源码编译，请参考以下指南：
+
+### 开发环境要求
+
+* Rust 1.80+（2024 Edition）
+* C 编译器：
+  * Windows: MSVC
+  * Linux / macOS: GCC 或 Clang
 
 ### 编译构建
 
 ```bash
-# 克隆仓库（包含 submodule）
 git clone --recurse-submodules https://github.com/NimitzDEV/vcd30player.git
 cd vcd30player
 
-# 若克隆时未添加 --recurse-submodules，可执行以下命令拉取子模块：
-git submodule update --init --recursive
-
-# 编译 Debug 版本
-cargo build
-
-# 编译 Release 高性能版本
 cargo build --release
+```
+
+如果克隆时未添加子模块参数，可执行：
+
+```bash
+git submodule update --init --recursive
 ```
 
 ### 运行播放器
 
-```bash
-# 直接启动图形界面
-cargo run --release
+直接启动图形界面：
 
-# 或在命令行直接指定已挂载的光盘根目录或解压目录
+```bash
+cargo run --release
+```
+
+或在启动时直接指定光盘挂载盘符 / 解压目录：
+
+```bash
 cargo run --release -- "D:\"
 ```
 
@@ -86,73 +128,110 @@ cargo run --release -- "D:\"
 
 ## 🧪 测试指南
 
-项目自带完整的单元测试与集成测试（共 47 项测试）：
+项目内置了小巧、脱敏且完全自包含的测试样本，无需物理光驱即可运行全部单元测试与集成测试：
 
 ```bash
-# 运行全部测试（使用内置的测试样本，无需真实光盘）
 cargo test
 ```
 
-### 使用真实光盘运行扩展测试
-
-如需对本地挂载的真实光盘进行全量测试，可以通过环境变量指定盘符或挂载路径：
+如需针对本地真实的物理光盘运行扩展测试：
 
 ```powershell
-# Windows (PowerShell)
-$env:VCD_TEST_DISC = "D:\"; cargo test
+$env:VCD_TEST_DISC = "D:\"
+cargo test
 ```
 
+Linux / macOS：
+
 ```bash
-# Linux / macOS (Bash)
 VCD_TEST_DISC="/media/cdrom" cargo test
 ```
 
 ---
 
-## 📂 项目结构
+## 🔬 格式分析与兼容设计
+
+本项目的起点是针对一张原始播放程序已无法在现代系统运行的 VCD 3.0 真实光盘展开的分析。
+
+项目通过现代、规范的实现，逐步替代原有的历史遗留运行时，重新还原底层数据格式与执行环境。
+
+核心数据流与格式架构：
+
+```text
+VCD 3.0 光盘
+    │
+    ├── CHM / COMPHTML (页面布局与热区)
+    ├── YBM / YUVBMP   (图像与调色板)
+    ├── CLS / Java 字节码 (启动配置)
+    ├── VCD 脚本        (交互与逻辑)
+    └── MPEG / CD-XA   (视频与音频)
+            │
+            ▼
+     现代 VCD 3.0 运行时引擎
+```
+
+项目的长远目标并非重现旧版 Windows 系统的所有细节，而是**直接重新实现播放 VCD 3.0 光盘内容所需的完整交互语义**。
+
+---
+
+## 📁 项目结构
 
 ```text
 vcd30player/
 ├── .github/
+│   ├── ISSUE_TEMPLATE/    # Issue 反馈模板
 │   ├── workflows/
 │   │   ├── ci.yml         # 自动化持续集成与测试
-│   │   └── release.yml    # Tag 触发多平台二进制自动编译与发布
-├── c_src/                 # C 桥接代码（pl_mpeg_impl.c）
-├── vendor/
-│   └── pl_mpeg/           # Git Submodule（官方 phoboslab/pl_mpeg）
+│   │   └── release.yml    # 多平台二进制打包与发布流水线
+│   └── PULL_REQUEST_TEMPLATE.md
 ├── src/
-│   ├── assets/            # CHM、YBM、CLS 格式解析器
-│   ├── audio/             # 音频管理器与混音播放
-│   ├── core/              # 核心状态机、VCDSCRIPT AST 与虚拟机
+│   ├── assets/            # CHM / YBM / CLS 文件格式解析
+│   ├── audio/             # 音频播放与音效混音
+│   ├── core/              # 运行时状态机、脚本 AST 与虚拟机
 │   ├── ui/                # egui 渲染界面与虚拟遥控器
-│   ├── video/             # CD-XA 解复用器与 MPEG 视频播放器
-│   ├── lib.rs             # 库入口导出
-│   └── main.rs            # 应用程序主入口
-├── tests/
-│   ├── common/            # 测试光盘路径解析辅助模块
-│   ├── fixtures/          # 300KB 测试专用虚拟光盘样本
-│   └── *.rs               # 完整测试套件
+│   └── video/             # CD-XA 解复用与 MPEG 视频播放
+├── c_src/                 # C 桥接层（pl_mpeg 解码绑定）
+├── vendor/                # Git Submodule（上游 phoboslab/pl_mpeg）
+├── tests/                 # 单元测试、集成测试与脱敏测试样本
 ├── Cargo.toml
-├── CHANGELOG.md           # 版本更新日志
-├── CONTRIBUTING.md        # 贡献指南
+├── CHANGELOG.md
+├── CONTRIBUTING.md
 ├── LICENSE-APACHE
 ├── LICENSE-MIT
-├── README.md              # 中文说明
-└── README_EN.md           # English Documentation
+├── README.md              # 中文说明文档
+└── README_EN.md           # 英文说明文档
 ```
+
+---
+
+## 🤝 参与贡献
+
+VCD 3.0 属于缺乏公开技术规范且较少被数字保存的多媒体格式。如果您拥有：
+
+* VCD 3.0 实体光盘
+* 原始光盘播放软件
+* 相关的格式文档或技术资料
+* 格式分析与测试发现
+* 典型测试样本
+* 兼容性测试反馈
+
+这些对本项目都是极为宝贵的帮助。
+
+欢迎提交 Issue、Pull Request、格式分析成果与兼容性报告。提交前请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ---
 
 ## ⚠️ 免责声明
 
-本项目仅作为 VCD 3.0 格式光盘的播放与学习研究工具：
-- 本项目代码仓库不包含、亦不分发任何受版权保护的商业影视、音乐或游戏等光盘原盘媒体内容。
-- 用户使用本播放器时，请确保使用的是您合法拥有的光盘介质或合法备份副本。
+本项目**不分发**任何商业 VCD 光盘内容、受版权保护的音视频媒体或原版商业光盘。
+
+请在您拥有合法使用权的光盘或其合法备份副本上使用本播放器。
 
 ---
 
 ## 📜 开源协议
 
-本项目采用双重开源协议授权：
-- [MIT License](LICENSE-MIT) 或
-- [Apache License, Version 2.0](LICENSE-APACHE)
+本项目采用双重开源协议授权，您可以任选其一：
+
+* [MIT License](LICENSE-MIT)
+* [Apache License, Version 2.0](LICENSE-APACHE)

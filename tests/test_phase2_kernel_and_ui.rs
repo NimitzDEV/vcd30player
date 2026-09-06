@@ -24,6 +24,24 @@ fn test_kernel_open_disc_and_autorun() {
         non_zero_count > 1000,
         "Canvas should be populated with image pixels"
     );
+
+    // Verify live disc if mounted
+    if let Some(live_root) = common::get_live_disc_root() {
+        let mut live_kernel = VcdKernel::new();
+        if live_kernel.open_disc(live_root).is_ok() {
+            let cls_has_video = live_kernel
+                .autorun_config
+                .as_ref()
+                .and_then(|c| c.opening_mpeg.as_ref())
+                .is_some();
+            assert_eq!(
+                live_kernel.is_video_active(),
+                cls_has_video,
+                "Kernel video active state must match whether AUTORUN.CLS specifies an opening video"
+            );
+            assert_eq!(live_kernel.current_page_name, "HOMEPAGE.CHM");
+        }
+    }
 }
 
 #[test]

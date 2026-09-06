@@ -211,6 +211,13 @@ fn test_parse_autorun_cls() {
     let cfg = AutoRunConfig::parse(&bytes).expect("Failed to parse AUTORUN.CLS");
 
     assert_eq!(cfg.cover_ybm, "COVER.YBM");
-    assert_eq!(cfg.opening_mpeg, "MUSIC01.DAT");
     assert_eq!(cfg.homepage_chm, "HOMEPAGE.CHM");
+
+    let raw_str = String::from_utf8_lossy(&bytes);
+    let expects_opening = raw_str.contains("PlayMpeg") || raw_str.contains(".DAT");
+    if expects_opening {
+        assert_eq!(cfg.opening_mpeg, Some("MUSIC01.DAT".to_string()));
+    } else {
+        assert_eq!(cfg.opening_mpeg, None);
+    }
 }

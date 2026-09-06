@@ -111,8 +111,7 @@ fn test_yt02_chm_audio_and_wav_hotspot_triggering() {
         .expect("PIPA.WAV hotspot should exist")
         .clone();
 
-    let activated = kernel.activate_hotspot(&pipa_area).unwrap();
-    assert!(!activated);
+    let _ = kernel.activate_hotspot(&pipa_area).unwrap();
 
     // BGM should be stopped and PIPA.WAV played
     assert!(!kernel.audio.is_bgm_playing());

@@ -315,8 +315,10 @@ impl VcdKernel {
             if let Ok(bytes) = std::fs::read(&cls_file) {
                 if let Ok(config) = AutoRunConfig::parse(&bytes) {
                     initial_page = config.homepage_chm.clone();
-                    if !config.opening_mpeg.is_empty() {
-                        opening_video = Some(config.opening_mpeg.clone());
+                    if let Some(ref mpeg) = config.opening_mpeg {
+                        if !mpeg.is_empty() {
+                            opening_video = Some(mpeg.clone());
+                        }
                     }
                     self.autorun_config = Some(config);
                 }

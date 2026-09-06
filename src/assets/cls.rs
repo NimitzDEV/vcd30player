@@ -46,7 +46,7 @@ pub struct AutoRunConfig {
     pub title_name: String,
     pub cover_ybm: String,
     pub license_signature: String,
-    pub opening_mpeg: String,
+    pub opening_mpeg: Option<String>,
     pub homepage_chm: String,
 }
 
@@ -134,8 +134,22 @@ impl AutoRunConfig {
         let mut title_name = "TitleName Demo".to_string();
         let mut cover_ybm = "COVER.YBM".to_string();
         let mut license_sig = String::new();
-        let mut opening_mpeg = "MUSIC01.DAT".to_string();
         let mut homepage_chm = "HOMEPAGE.CHM".to_string();
+
+        // Check if PlayMpeg invocation symbol or .DAT string is present in the constant pool
+        let has_play_mpeg = strings.iter().any(|s| s == "PlayMpeg");
+        let dat_string = strings
+            .iter()
+            .find(|s| s.to_uppercase().ends_with(".DAT"))
+            .cloned();
+
+        let opening_mpeg = if let Some(dat) = dat_string {
+            Some(dat)
+        } else if has_play_mpeg {
+            Some("MUSIC01.DAT".to_string())
+        } else {
+            None
+        };
 
         for s in &strings {
             if s.starts_with("UserName") {
@@ -144,8 +158,6 @@ impl AutoRunConfig {
                 title_name = s.clone();
             } else if s.to_uppercase().ends_with(".YBM") {
                 cover_ybm = s.clone();
-            } else if s.to_uppercase().ends_with(".DAT") {
-                opening_mpeg = s.clone();
             } else if s.to_uppercase().ends_with(".CHM") {
                 homepage_chm = s.clone();
             } else if s.contains('^') || s.contains('#') {
@@ -172,5 +184,62 @@ mod tests {
     fn test_class_magic_validation() {
         let bad = vec![0u8; 20];
         assert_eq!(AutoRunConfig::parse(&bad), Err(ClsError::InvalidMagic(0)));
+    }
+
+    #[test]
+    fn test_cls_no_opening_video_when_not_called() {
+        // Construct a mock class with only LicenseCheck and HOMEPAGE.CHM, no PlayMpeg or .DAT
+        let mut class_bytes = Vec::new();
+        class_bytes.extend_from_slice(&JAVA_CLASS_MAGIC.to_be_bytes());
+        class_bytes.extend_from_slice(&3u16.to_be_bytes()); // minor
+        class_bytes.extend_from_slice(&45u16.to_be_bytes()); // major 45.3
+
+        let utf8_entries = [
+            "COVER.YBM",
+            "HOMEPAGE.CHM",
+            "UserName LeiShi",
+            "TitleName LeiShi",
+            "^%$@# ]`d_a`b5#:5:9<99B*+",
+        ];
+        let cp_count = (utf8_entries.len() + 1) as u16;
+        class_bytes.extend_from_slice(&cp_count.to_be_bytes());
+
+        for entry in &utf8_entries {
+            class_bytes.push(1); // CONSTANT_Utf8 tag
+            class_bytes.extend_from_slice(&(entry.len() as u16).to_be_bytes());
+            class_bytes.extend_from_slice(entry.as_bytes());
+        }
+
+        let cfg = AutoRunConfig::parse(&class_bytes).expect("Failed to parse mock CLS");
+        assert_eq!(cfg.cover_ybm, "COVER.YBM");
+        assert_eq!(cfg.homepage_chm, "HOMEPAGE.CHM");
+        assert_eq!(cfg.opening_mpeg, None, "Must not assume opening video when absent in CLS");
+    }
+
+    #[test]
+    fn test_cls_with_play_mpeg_and_dat() {
+        // Construct a mock class with PlayMpeg and MUSIC01.DAT
+        let mut class_bytes = Vec::new();
+        class_bytes.extend_from_slice(&JAVA_CLASS_MAGIC.to_be_bytes());
+        class_bytes.extend_from_slice(&3u16.to_be_bytes());
+        class_bytes.extend_from_slice(&45u16.to_be_bytes());
+
+        let utf8_entries = [
+            "COVER.YBM",
+            "HOMEPAGE.CHM",
+            "PlayMpeg",
+            "MUSIC01.DAT",
+        ];
+        let cp_count = (utf8_entries.len() + 1) as u16;
+        class_bytes.extend_from_slice(&cp_count.to_be_bytes());
+
+        for entry in &utf8_entries {
+            class_bytes.push(1);
+            class_bytes.extend_from_slice(&(entry.len() as u16).to_be_bytes());
+            class_bytes.extend_from_slice(entry.as_bytes());
+        }
+
+        let cfg = AutoRunConfig::parse(&class_bytes).expect("Failed to parse mock CLS");
+        assert_eq!(cfg.opening_mpeg, Some("MUSIC01.DAT".to_string()));
     }
 }

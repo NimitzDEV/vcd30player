@@ -1,7 +1,6 @@
 //! VCD 3.0 Player GUI application implementation using eframe/egui.
 
 use crate::core::kernel::{CANVAS_HEIGHT, CANVAS_WIDTH, VcdKernel};
-use crate::core::script_vm::VmState;
 use eframe::egui::{
     self, Color32, ColorImage, Pos2, Rect, Stroke, StrokeKind, TextureOptions, Vec2,
 };
@@ -233,10 +232,7 @@ impl eframe::App for VcdPlayerApp {
             ctx.request_repaint();
         } else {
             if self.kernel.is_vm_active() {
-                let state = self.kernel.run_vm();
-                if matches!(state, VmState::Finished) {
-                    let _ = self.kernel.go_back_or_home();
-                }
+                self.kernel.run_vm();
                 self.texture = None;
                 self.texture_dirty = true;
                 ctx.request_repaint();

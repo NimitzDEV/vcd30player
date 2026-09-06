@@ -244,19 +244,37 @@ impl CompHtmlDoc {
                         };
 
                         let mut filename = String::new();
-                        // Find .YBM or .BMP extension in chunk data
-                        for (i, w) in c_data.windows(4).enumerate() {
-                            if w.eq_ignore_ascii_case(b".YBM") || w.eq_ignore_ascii_case(b".BMP") {
-                                let mut start = i;
-                                while start > 0
-                                    && c_data[start - 1] >= 32
-                                    && c_data[start - 1] < 127
+                        // 1. Primary: Standard layout places a 4-byte BE length prefix at offset 0x60
+                        // followed immediately by the ASCII filename (e.g. 2_5A.YBM, 3_5A.YBM).
+                        if c_data.len() >= 0x64 {
+                            let fn_len =
+                                u32::from_be_bytes(c_data[0x60..0x64].try_into().unwrap()) as usize;
+                            if fn_len > 0 && fn_len < 64 && 0x64 + fn_len <= c_data.len() {
+                                let s = extract_null_terminated_str(&c_data[0x64..0x64 + fn_len]);
+                                if s.to_uppercase().ends_with(".YBM")
+                                    || s.to_uppercase().ends_with(".BMP")
                                 {
-                                    start -= 1;
+                                    filename = s;
                                 }
-                                filename =
-                                    String::from_utf8_lossy(&c_data[start..i + 4]).to_string();
-                                break;
+                            }
+                        }
+
+                        // 2. Fallback: Search from the end backwards to avoid dirty compiler buffers in 0x20..0x60
+                        if filename.is_empty() {
+                            for (i, w) in c_data.windows(4).enumerate().rev() {
+                                if w.eq_ignore_ascii_case(b".YBM") || w.eq_ignore_ascii_case(b".BMP") {
+                                    let mut start = i;
+                                    while start > 0
+                                        && c_data[start - 1] >= 32
+                                        && c_data[start - 1] < 127
+                                        && c_data[start - 1] != b'"'
+                                    {
+                                        start -= 1;
+                                    }
+                                    filename =
+                                        String::from_utf8_lossy(&c_data[start..i + 4]).to_string();
+                                    break;
+                                }
                             }
                         }
 
@@ -528,3 +546,55 @@ impl CompHtmlDoc {
         res
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_img_chunk_with_dirty_buffer() {
+        let mut chm_bytes = Vec::new();
+        // Magic
+        chm_bytes.extend_from_slice(COMPHTML_MAGIC);
+        chm_bytes.extend_from_slice(&[0u8; 2]); // pad to 12
+
+        // Header (208 bytes)
+        let mut header = vec![0u8; 208];
+        header[0x80..0x84].copy_from_slice(&352u32.to_be_bytes());
+        header[0x84..0x88].copy_from_slice(&288u32.to_be_bytes());
+        header[0x88..0x8c].copy_from_slice(&0u32.to_be_bytes());
+        header[0x8c..0x90].copy_from_slice(&1u32.to_be_bytes()); // 1 palette entry
+        chm_bytes.extend_from_slice(&header);
+
+        // 1 palette entry (4 bytes)
+        chm_bytes.extend_from_slice(&[0, 128, 128, 0]);
+
+        // IMG Chunk (Type 3) with dirty compiler buffer
+        let mut img_data = vec![0u8; 112];
+        img_data[0x08..0x0c].copy_from_slice(&352u32.to_be_bytes());
+        img_data[0x0c..0x10].copy_from_slice(&288u32.to_be_bytes());
+        // Dirty leftovers in 0x20..0x40 from previous script compiler buffer
+        let dirty = b"MAGE \"HAND.YBM\",163,52,0\r\n40 END";
+        img_data[0x20..0x20 + dirty.len()].copy_from_slice(dirty);
+        // True filename at offset 0x60: length 8 + "2_5A.YBM"
+        img_data[0x60..0x64].copy_from_slice(&8u32.to_be_bytes());
+        img_data[0x64..0x6c].copy_from_slice(b"2_5A.YBM");
+
+        // Chunk header: type 3, size 112, flags 0
+        chm_bytes.extend_from_slice(&3u32.to_be_bytes());
+        chm_bytes.extend_from_slice(&(img_data.len() as u32).to_be_bytes());
+        chm_bytes.extend_from_slice(&0u32.to_be_bytes());
+        chm_bytes.extend_from_slice(&img_data);
+
+        // End tag
+        chm_bytes.extend_from_slice(COMPHTML_END_TAG);
+
+        let doc = CompHtmlDoc::parse(&chm_bytes).expect("Failed to parse mock CHM");
+        assert_eq!(
+            doc.get_background_image(),
+            Some("2_5A.YBM"),
+            "Must parse true filename from 0x60 rather than dirty script memory"
+        );
+    }
+}
+

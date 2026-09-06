@@ -131,3 +131,37 @@ fn test_parse_disc_tb_and_weight_scripts() {
         assert!(prog.lines.contains_key(&9000));
     }
 }
+
+#[test]
+fn test_rem_statement_with_colons() {
+    // 1_5A_R.CHM line 100 style
+    let code = r#"
+100 REM X: L=34, M=130, R=228
+110 X = 1 : REM comment: with colons : and more
+120 ' single quote comment: foo : bar
+"#;
+    let prog = ScriptProgram::parse(code);
+
+    let l100 = &prog.lines[&100];
+    assert_eq!(l100.len(), 1);
+    assert_eq!(
+        l100[0],
+        Statement::Rem("X: L=34, M=130, R=228".to_string())
+    );
+
+    let l110 = &prog.lines[&110];
+    assert_eq!(l110.len(), 2);
+    assert_eq!(l110[0], Statement::Assign(b'X', Expr::Const(1)));
+    assert_eq!(
+        l110[1],
+        Statement::Rem("comment: with colons : and more".to_string())
+    );
+
+    let l120 = &prog.lines[&120];
+    assert_eq!(l120.len(), 1);
+    assert_eq!(
+        l120[0],
+        Statement::Rem("single quote comment: foo : bar".to_string())
+    );
+}
+

@@ -140,23 +140,59 @@ impl ScriptProgram {
     }
 }
 
-/// Splits a line by `:` ignoring colons inside string quotes.
+/// Splits a line by `:` ignoring colons inside string quotes and colons inside REM comments.
 fn split_statements(line: &str) -> Vec<&str> {
     let mut stmts = Vec::new();
     let mut in_quotes = false;
     let mut start = 0;
 
     let bytes = line.as_bytes();
-    for i in 0..bytes.len() {
+    let mut i = 0;
+    while i < bytes.len() {
         if bytes[i] == b'"' {
             in_quotes = !in_quotes;
-        } else if bytes[i] == b':' && !in_quotes {
-            let s = line[start..i].trim();
-            if !s.is_empty() {
-                stmts.push(s);
+        } else if !in_quotes {
+            // If the statement segment starting at `start` begins with REM or ',
+            // the rest of the line is comment and must not be split by `:`.
+            let current = line[start..=i].trim_start();
+            let upper = current.to_ascii_uppercase();
+            let is_rem = if upper.starts_with('\'') {
+                true
+            } else if upper.starts_with("REM") {
+                if upper.len() == 3 {
+                    if i + 1 < bytes.len() {
+                        let next_c = bytes[i + 1] as char;
+                        next_c.is_whitespace() || next_c == ':'
+                    } else {
+                        true
+                    }
+                } else {
+                    current[3..]
+                        .chars()
+                        .next()
+                        .map_or(false, |c| c.is_whitespace() || c == ':')
+                }
+            } else {
+                false
+            };
+
+            if is_rem {
+                let s = line[start..].trim();
+                if !s.is_empty() {
+                    stmts.push(s);
+                }
+                return stmts;
             }
-            start = i + 1;
+
+            if bytes[i] == b':' {
+                let s = line[start..i].trim();
+                if !s.is_empty() {
+                    stmts.push(s);
+                }
+                start = i + 1;
+            }
         }
+        i += 1;
     }
 
     let tail = line[start..].trim();
@@ -203,10 +239,19 @@ pub fn parse_single_statement(s: &str) -> Statement {
         return Statement::Rem(String::new());
     }
 
+    // ' comment
+    if trimmed.starts_with('\'') {
+        return Statement::Rem(trimmed[1..].trim().to_string());
+    }
+
     let upper = trimmed.to_ascii_uppercase();
 
     // REM
-    if upper.starts_with("REM") && (upper.len() == 3 || upper.chars().nth(3).unwrap().is_whitespace()) {
+    if upper.starts_with("REM")
+        && (upper.len() == 3
+            || upper.chars().nth(3).unwrap().is_whitespace()
+            || upper.chars().nth(3).unwrap() == ':')
+    {
         return Statement::Rem(trimmed[3..].trim().to_string());
     }
 

@@ -1,9 +1,9 @@
 # vcd30player
 
-[![CI](https://github.com/NimitzDEV/vcd30player/actions/workflows/ci.yml/badge.svg)](https://github.com/NimitzDEV/vcd30player/actions/workflows/ci.yml)
+[![CI](https://github.com/NimitzDEV/vcd30player/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/NimitzDEV/vcd30player/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/NimitzDEV/vcd30player?color=blue&label=release)](https://github.com/NimitzDEV/vcd30player/releases/latest)
 [![Rust](https://img.shields.io/badge/Language-Rust_2024_Edition-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](#开源协议)
-[![Tests](https://img.shields.io/badge/Tests-47%20Passed-brightgreen.svg)](#测试指南)
 
 **基于 Rust 编写的现代化跨平台 VCD 3.0 播放器。**
 

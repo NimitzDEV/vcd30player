@@ -85,7 +85,7 @@ impl VcdPlayerApp {
             texture_dirty: true,
             show_hotspots: false,
             show_metadata: false,
-            show_remote: true,
+            show_remote: false,
             hovered_hotspot: None,
             status_message: status,
         }

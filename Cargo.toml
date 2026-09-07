@@ -1,6 +1,6 @@
 [package]
 name = "vcd30_player"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 authors = ["NimitzDEV"]
 description = "A cross-platform player and interactive runtime for VCD 3.0 discs"

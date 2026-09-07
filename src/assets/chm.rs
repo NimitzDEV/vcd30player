@@ -96,6 +96,13 @@ impl MapArea {
                 (mid_x + 12).min(352),
                 (mid_y + 12).min(288),
             )
+        } else if (max_y - min_y) <= 8 && (max_x - min_x) > 8 {
+            (
+                (min_x - 2).max(0),
+                (min_y - 8).max(0),
+                (max_x + 2).min(352),
+                (max_y + 3).min(288),
+            )
         } else {
             (min_x, min_y, max_x, max_y)
         }
@@ -611,13 +618,39 @@ impl CompHtmlDoc {
         res
     }
 
+    /// Collects all embedded image elements.
+    pub fn get_images(&self) -> Vec<&ImageElement> {
+        let mut res = Vec::new();
+        for chunk in &self.chunks {
+            if let ChunkPayload::Image(img) = chunk {
+                if !img.filename.is_empty() {
+                    res.push(img);
+                }
+            }
+        }
+        res
+    }
+
     /// Returns true if this document acts as an overlay layer rather than a standalone page.
     pub fn is_overlay(&self) -> bool {
-        self.get_background_image().is_none()
-            && self
-                .chunks
-                .iter()
-                .any(|c| matches!(c, ChunkPayload::VariableText { .. }))
+        let has_var_text = self
+            .chunks
+            .iter()
+            .any(|c| matches!(c, ChunkPayload::VariableText { .. }));
+
+        let has_sub_images = !self.chunks.is_empty()
+            && self.chunks.iter().any(|c| {
+                if let ChunkPayload::Image(img) = c {
+                    img.x != 0
+                        || img.y != 0
+                        || (img.width > 0 && img.width < 352)
+                        || (img.height > 0 && img.height < 288)
+                } else {
+                    false
+                }
+            });
+
+        (self.get_background_image().is_none() && has_var_text) || has_sub_images
     }
 
     /// Collects all variable text display definitions (x, y, var_name).

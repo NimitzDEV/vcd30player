@@ -450,7 +450,25 @@ impl VcdKernel {
             );
         }
 
-        // 2. Render any variable text elements onto canvas
+        // 2. Render any overlay images onto canvas
+        for img in doc.get_images() {
+            if let Some(img_path) = self.find_file(&img.filename) {
+                if let Ok(bytes) = std::fs::read(&img_path) {
+                    if let Ok(ybm) = YbmImage::decode(&bytes) {
+                        ybm.blit_to_rgba_canvas(
+                            &mut self.canvas,
+                            CANVAS_WIDTH,
+                            CANVAS_HEIGHT,
+                            img.x,
+                            img.y,
+                            None,
+                        );
+                    }
+                }
+            }
+        }
+
+        // 3. Render any variable text elements onto canvas
         for (x, y, var_name) in doc.get_variable_texts() {
             let val = self.get_variable_by_name(var_name);
             let text = format!("{}", val);
@@ -758,11 +776,23 @@ impl VcdKernel {
         // If an overlay document is active, prioritize its hotspots
         if let Some(overlay) = &self.overlay_doc {
             let overlay_hotspots = overlay.get_all_hotspots();
-            for area in overlay_hotspots {
+            for area in &overlay_hotspots {
                 if !area.is_point_hotspot() {
                     let (min_x, min_y, max_x, max_y) = area.raw_bounds();
                     if x >= min_x && x <= max_x && y >= min_y && y <= max_y {
                         return Some(area);
+                    }
+                }
+            }
+            for area in &overlay_hotspots {
+                if !area.is_point_hotspot() {
+                    let (min_x, min_y, max_x, max_y) = area.raw_bounds();
+                    let height = max_y - min_y;
+                    let width = max_x - min_x;
+                    if height <= 8 && width > 8 {
+                        if x >= min_x - 2 && x <= max_x + 2 && y >= min_y - 8 && y <= max_y + 3 {
+                            return Some(area);
+                        }
                     }
                 }
             }
@@ -778,6 +808,22 @@ impl VcdKernel {
                 let (min_x, min_y, max_x, max_y) = area.raw_bounds();
                 if x >= min_x && x <= max_x && y >= min_y && y <= max_y {
                     return Some(area);
+                }
+            }
+        }
+
+        // Phase 1.5: Natural tolerance for thin underline hotspots (e.g. fill-in-the-blank lines where height <= 8).
+        // Authoring in EX*.CHM places 4-5px tall lines strictly on the underline ___ bar (y=80..85),
+        // while the user naturally clicks in the blank space or on the question text (y=72..88).
+        for area in &all_hotspots {
+            if !area.is_point_hotspot() {
+                let (min_x, min_y, max_x, max_y) = area.raw_bounds();
+                let height = max_y - min_y;
+                let width = max_x - min_x;
+                if height <= 8 && width > 8 {
+                    if x >= min_x - 2 && x <= max_x + 2 && y >= min_y - 8 && y <= max_y + 3 {
+                        return Some(area);
+                    }
                 }
             }
         }

@@ -229,3 +229,85 @@ fn test_live_disc_game051_answer_score_accumulation() {
     kernel.activate_hotspot(&exit_area).expect("Activate exit button");
     assert_eq!(kernel.get_variable_by_name("i_e"), 0, "Score must reset to 0 on exit");
 }
+
+#[test]
+fn test_live_disc_ex011_overlay_and_underline_hotspot() {
+    let disc_root = match get_live_disc_root() {
+        Some(p) => p,
+        None => return,
+    };
+
+    let mut kernel = VcdKernel::new();
+    if kernel.open_disc(disc_root).is_err() {
+        return;
+    }
+
+    if kernel.find_file("EX011.CHM").is_none() {
+        return;
+    }
+
+    kernel.load_page("EX011.CHM", false).expect("Load EX011.CHM");
+    assert_eq!(kernel.current_page_name, "EX011.CHM");
+    assert!(kernel.overlay_doc.is_none());
+
+    // Test 1: Hit test with underline upward tolerance in blank space (y=75, underline is y=80..85)
+    let hit_blank = kernel.hit_test(125, 75);
+    assert!(hit_blank.is_some(), "Clicking in blank above underline must hit");
+    let area0 = hit_blank.unwrap().clone();
+    assert_eq!(area0.target, "AS011_1.CHM");
+    assert!(area0.is_overlay);
+
+    // Test 2: Exact hit test on underline (y=82)
+    let hit_exact = kernel.hit_test(125, 82);
+    assert!(hit_exact.is_some());
+    assert_eq!(hit_exact.unwrap().target, "AS011_1.CHM");
+
+    // Capture pixel at (50, 245) before activating overlay
+    let pixel_idx = ((245 * 352 + 50) * 4) as usize;
+    let base_pixel = [
+        kernel.canvas[pixel_idx],
+        kernel.canvas[pixel_idx + 1],
+        kernel.canvas[pixel_idx + 2],
+        kernel.canvas[pixel_idx + 3],
+    ];
+
+    // Test 3: Activate overlay hotspot AS011_1.CHM
+    kernel.activate_hotspot(&area0).expect("Activate AS011_1.CHM");
+    assert!(kernel.overlay_doc.is_some(), "Overlay doc must be active");
+    assert_eq!(kernel.current_page_name, "EX011.CHM", "Base page remains EX011.CHM");
+
+    // The sub-image AS011_1.YBM was blitted to (0, 228), modifying the answer box pixels
+    let mut any_changed = false;
+    for y in 228..266 {
+        for x in 0..164 {
+            let idx = ((y * 352 + x) * 4) as usize;
+            if [kernel.canvas[idx], kernel.canvas[idx + 1], kernel.canvas[idx + 2]] != [base_pixel[0], base_pixel[1], base_pixel[2]] {
+                any_changed = true;
+                break;
+            }
+        }
+        if any_changed {
+            break;
+        }
+    }
+    assert!(any_changed, "Overlay sub-image must have blitted onto canvas in the answer area");
+
+    // Test 4: Hit test Question 2 underline (y=105, bounds 62,110 - 92,115) while overlay is active
+    let hit_q2 = kernel.hit_test(75, 105);
+    assert!(hit_q2.is_some(), "Base page hotspots remain clickable when overlay has no conflicting hotspots");
+    let area1 = hit_q2.unwrap().clone();
+    assert_eq!(area1.target, "AS011_2.CHM");
+    kernel.activate_hotspot(&area1).expect("Activate AS011_2.CHM");
+    assert!(kernel.overlay_doc.is_some());
+
+    // Test 5: Return button (E011.CHM) dismisses overlay and navigates
+    let hit_ret = kernel.hit_test(300, 250);
+    assert!(hit_ret.is_some());
+    let area_ret = hit_ret.unwrap().clone();
+    assert_eq!(area_ret.target, "E011.CHM");
+    assert!(!area_ret.is_overlay);
+    kernel.activate_hotspot(&area_ret).expect("Activate return button");
+    assert!(kernel.overlay_doc.is_none(), "Overlay must be cleared on navigation");
+    assert_eq!(kernel.current_page_name, "E011.CHM");
+}
+

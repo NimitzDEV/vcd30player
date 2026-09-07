@@ -91,6 +91,20 @@ impl VcdPlayerApp {
         }
     }
 
+    /// Creates an app instance wrapping an existing VcdKernel.
+    pub fn from_kernel(kernel: VcdKernel) -> Self {
+        Self {
+            kernel,
+            texture: None,
+            texture_dirty: true,
+            show_hotspots: false,
+            show_metadata: false,
+            show_remote: false,
+            hovered_hotspot: None,
+            status_message: String::new(),
+        }
+    }
+
     /// Checks if a disc or page is currently loaded.
     pub fn is_disc_loaded(&self) -> bool {
         !self.kernel.disc_root.as_os_str().is_empty()
@@ -212,10 +226,9 @@ impl VcdPlayerApp {
             display_rect.min.y + (canvas_y as f32 / CANVAS_HEIGHT as f32) * display_rect.height();
         Pos2::new(x, y)
     }
-}
 
-impl eframe::App for VcdPlayerApp {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    /// Renders the VCD player UI into the given egui::Ui.
+    pub fn show(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
 
         // Drive video playback or active VM
@@ -456,49 +469,54 @@ impl eframe::App for VcdPlayerApp {
 
         // 3. Keyboard Input Handling
         if self.kernel.is_video_active() {
+            let mut toggle_pause = false;
+            let mut stop_video = false;
+            let mut seek_delta = 0.0;
+
             ctx.input(|i| {
                 if i.key_pressed(egui::Key::Space) {
-                    if let Some(ref mut player) = self.kernel.active_video {
-                        player.toggle_play_pause();
-                    }
+                    toggle_pause = true;
                 } else if i.key_pressed(egui::Key::Escape) || i.key_pressed(egui::Key::Backspace) {
-                    let _ = self.kernel.stop_video_and_exit();
-                    self.texture = None;
-                    self.texture_dirty = true;
-                    ctx.request_repaint();
+                    stop_video = true;
                 } else if i.key_pressed(egui::Key::ArrowLeft) {
-
-                    if let Some(ref mut player) = self.kernel.active_video {
-                        let cur = player.current_time();
-                        player.seek(cur - 5.0);
-                    }
+                    seek_delta = -5.0;
                 } else if i.key_pressed(egui::Key::ArrowRight) {
-                    if let Some(ref mut player) = self.kernel.active_video {
-                        let cur = player.current_time();
-                        player.seek(cur + 5.0);
-                    }
+                    seek_delta = 5.0;
                 }
             });
+
+            if toggle_pause {
+                if let Some(ref mut player) = self.kernel.active_video {
+                    player.toggle_play_pause();
+                }
+            }
+            if stop_video {
+                let _ = self.kernel.stop_video_and_exit();
+                self.texture = None;
+                self.texture_dirty = true;
+                ctx.request_repaint();
+            }
+            if seek_delta != 0.0 {
+                if let Some(ref mut player) = self.kernel.active_video {
+                    let cur = player.current_time();
+                    player.seek(cur + seek_delta);
+                }
+            }
         } else {
+            let mut remote_key = None;
             ctx.input(|i| {
                 if i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Space) {
-                    self.kernel.inject_remote_key(31);
-                    self.texture_dirty = true;
+                    remote_key = Some(31);
                 } else if i.key_pressed(egui::Key::Escape) || i.key_pressed(egui::Key::Backspace) {
-                    self.kernel.inject_remote_key(32);
-                    self.texture_dirty = true;
+                    remote_key = Some(32);
                 } else if i.key_pressed(egui::Key::ArrowUp) {
-                    self.kernel.inject_remote_key(34);
-                    self.texture_dirty = true;
+                    remote_key = Some(34);
                 } else if i.key_pressed(egui::Key::ArrowDown) {
-                    self.kernel.inject_remote_key(35);
-                    self.texture_dirty = true;
+                    remote_key = Some(35);
                 } else if i.key_pressed(egui::Key::ArrowLeft) {
-                    self.kernel.inject_remote_key(36);
-                    self.texture_dirty = true;
+                    remote_key = Some(36);
                 } else if i.key_pressed(egui::Key::ArrowRight) {
-                    self.kernel.inject_remote_key(37);
-                    self.texture_dirty = true;
+                    remote_key = Some(37);
                 } else {
                     let num_keys = [
                         (egui::Key::Num0, 0),
@@ -514,13 +532,17 @@ impl eframe::App for VcdPlayerApp {
                     ];
                     for (k, val) in num_keys {
                         if i.key_pressed(k) {
-                            self.kernel.inject_remote_key(val);
-                            self.texture_dirty = true;
+                            remote_key = Some(val);
                             break;
                         }
                     }
                 }
             });
+
+            if let Some(key) = remote_key {
+                self.kernel.inject_remote_key(key);
+                self.texture_dirty = true;
+            }
         }
 
         // 4. Modal Dialog: Unrecognized Instruction Alert
@@ -890,3 +912,10 @@ impl eframe::App for VcdPlayerApp {
                 });
     }
 }
+
+impl eframe::App for VcdPlayerApp {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.show(ui);
+    }
+}
+

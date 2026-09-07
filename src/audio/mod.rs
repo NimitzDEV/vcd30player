@@ -14,7 +14,29 @@ pub struct AudioManager {
 }
 
 impl AudioManager {
+    /// Creates a silent, no-op AudioManager without touching native audio drivers.
+    pub fn silent() -> Self {
+        Self {
+            _stream: None,
+            stream_handle: None,
+            bgm_sink: None,
+            sfx_sink: None,
+            sound_cache: HashMap::new(),
+        }
+    }
+
     pub fn new() -> Self {
+        // Headless CI environments (GitHub Actions, etc.) on Windows have no audio hardware,
+        // and WASAPI COM calls can trigger a hard STATUS_ACCESS_VIOLATION (0xc0000005).
+        // Safely bypass audio hardware initialization in CI or when explicitly disabled.
+        if std::env::var_os("CI").is_some()
+            || std::env::var_os("GITHUB_ACTIONS").is_some()
+            || std::env::var_os("VCD_NO_AUDIO").is_some()
+            || std::env::var_os("VCD_HEADLESS").is_some()
+        {
+            return Self::silent();
+        }
+
         match OutputStream::try_default() {
             Ok((stream, handle)) => Self {
                 _stream: Some(stream),
@@ -25,13 +47,7 @@ impl AudioManager {
             },
             Err(e) => {
                 eprintln!("[AudioManager] Warning: Audio output device unavailable (falling back to silent mode): {}", e);
-                Self {
-                    _stream: None,
-                    stream_handle: None,
-                    bgm_sink: None,
-                    sfx_sink: None,
-                    sound_cache: HashMap::new(),
-                }
+                Self::silent()
             }
         }
     }

@@ -8,6 +8,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  VCD_NO_AUDIO: "1"
 
 jobs:
   test:

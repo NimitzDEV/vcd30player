@@ -15,6 +15,8 @@ pub struct VcdPlayerApp {
     pub show_remote: bool,
     pub hovered_hotspot: Option<String>,
     pub status_message: String,
+    pub status_timestamp: Option<std::time::Instant>,
+    pub idle_message: String,
 }
 
 fn setup_custom_fonts(ctx: &egui::Context) {
@@ -68,6 +70,7 @@ impl VcdPlayerApp {
 
         let mut kernel = VcdKernel::new();
         let mut status = "空闲 - 请点击“加载光盘”载入 VCD 光盘".to_string();
+        let mut has_initial_disc = false;
 
         if let Some(root) = initial_disc {
             if root.exists() {
@@ -75,6 +78,7 @@ impl VcdPlayerApp {
                     status = format!("打开光盘失败: {}", e);
                 } else {
                     status = format!("已加载光盘: {}", root.display());
+                    has_initial_disc = true;
                 }
             }
         }
@@ -88,6 +92,12 @@ impl VcdPlayerApp {
             show_remote: false,
             hovered_hotspot: None,
             status_message: status,
+            status_timestamp: if has_initial_disc {
+                Some(std::time::Instant::now())
+            } else {
+                None
+            },
+            idle_message: "空闲 - 请点击“加载光盘”载入 VCD 光盘".to_string(),
         }
     }
 
@@ -102,6 +112,54 @@ impl VcdPlayerApp {
             show_remote: false,
             hovered_hotspot: None,
             status_message: String::new(),
+            status_timestamp: None,
+            idle_message: "空闲 - 请点击“加载光盘”载入 VCD 光盘".to_string(),
+        }
+    }
+
+    /// Sets a temporary status message (Status 1) that will be displayed for 2 seconds.
+    pub fn set_status(&mut self, msg: impl Into<String>) {
+        self.status_message = msg.into();
+        self.status_timestamp = Some(std::time::Instant::now());
+    }
+
+    /// Renders default status info when no transient status or hover target is active.
+    fn render_default_status(&self, ui: &mut egui::Ui) {
+        if self.is_disc_loaded() {
+            let page_info = if !self.kernel.current_page_name.is_empty() {
+                let title = self
+                    .kernel
+                    .current_page
+                    .as_ref()
+                    .map(|d| d.title.as_str())
+                    .unwrap_or("");
+                if title.is_empty() {
+                    format!("📄 {}", self.kernel.current_page_name)
+                } else {
+                    format!("📄 {} ({})", self.kernel.current_page_name, title)
+                }
+            } else {
+                "未载入页面".to_string()
+            };
+
+            ui.label(egui::RichText::new(page_info).strong());
+            ui.label(egui::RichText::new("·").color(Color32::GRAY));
+
+            if let Some(ref player) = self.kernel.active_video {
+                let (w, h) = player.dimensions();
+                let fps = player.framerate();
+                ui.label(
+                    egui::RichText::new(format!(
+                        "🎬 {} ({}x{} @ {:.0}fps)",
+                        player.filename, w, h, fps
+                    ))
+                    .strong(),
+                );
+            } else {
+                ui.label(egui::RichText::new("🎬 未播放视频").color(Color32::DARK_GRAY));
+            }
+        } else {
+            ui.label(egui::RichText::new(&self.idle_message).color(Color32::GRAY));
         }
     }
 
@@ -138,7 +196,8 @@ impl VcdPlayerApp {
         self.kernel.vm.terminate();
         self.texture = None;
         self.texture_dirty = true;
-        self.status_message = "光盘已弹出，请加载光盘".to_string();
+        self.idle_message = "光盘已弹出，请加载光盘".to_string();
+        self.set_status("光盘已弹出，请加载光盘");
     }
 
     /// Resets the current disc or page to its freshly loaded state and restarts playback.
@@ -146,9 +205,9 @@ impl VcdPlayerApp {
         if !self.kernel.disc_root.as_os_str().is_empty() {
             let root = self.kernel.disc_root.clone();
             if let Err(e) = self.kernel.open_disc(root.clone()) {
-                self.status_message = format!("重置失败: {}", e);
+                self.set_status(format!("重置失败: {}", e));
             } else {
-                self.status_message = format!("已重置光盘: {}", root.display());
+                self.set_status(format!("已重置光盘: {}", root.display()));
                 self.texture = None;
                 self.texture_dirty = true;
                 ctx.request_repaint();
@@ -156,9 +215,9 @@ impl VcdPlayerApp {
         } else if !self.kernel.current_page_name.is_empty() {
             let page = self.kernel.current_page_name.clone();
             if let Err(e) = self.kernel.load_page(&page, false) {
-                self.status_message = format!("重置失败: {}", e);
+                self.set_status(format!("重置失败: {}", e));
             } else {
-                self.status_message = format!("已重置页面: {}", page);
+                self.set_status(format!("已重置页面: {}", page));
                 self.texture = None;
                 self.texture_dirty = true;
                 ctx.request_repaint();
@@ -233,6 +292,7 @@ impl VcdPlayerApp {
 
         // Drive video playback or active VM
         if self.kernel.is_video_active() {
+            self.hovered_hotspot = None;
             let new_frame = self.kernel.update_video();
             if !self.kernel.is_video_active() {
                 // Video ended during this update_video call!
@@ -256,9 +316,29 @@ impl VcdPlayerApp {
             }
         }
 
+        // 1. Custom Window Title Bar
+        let window_title = if !self.kernel.current_page_name.is_empty() {
+            let title = self
+                .kernel
+                .current_page
+                .as_ref()
+                .map(|d| d.title.as_str())
+                .unwrap_or("");
+            if title.is_empty() {
+                format!("vcd30player - {}", self.kernel.current_page_name)
+            } else {
+                format!("vcd30player - {} ({})", self.kernel.current_page_name, title)
+            }
+        } else {
+            "vcd30player".to_string()
+        };
+        crate::ui::titlebar::show_title_bar(ui, &window_title);
 
         // Bottom Control & Status Panel
         egui::Panel::bottom("bottom_bar").show(ui, |ui| {
+            // Equalize top margin to match the 6px bottom margin to separator
+            ui.add_space(3.0);
+
             // Row 1: Disc Loading / Ejection, Reset, Persistent Video Playback Controls
             ui.horizontal(|ui| {
                 let is_loaded = self.is_disc_loaded();
@@ -271,9 +351,9 @@ impl VcdPlayerApp {
                         if ui.add(egui::Button::new("📁 加载光盘").corner_radius(left_cr)).clicked() {
                             if let Some(folder) = rfd::FileDialog::new().pick_folder() {
                                 if let Err(e) = self.kernel.open_disc(folder.clone()) {
-                                    self.status_message = format!("打开失败: {}", e);
+                                    self.set_status(format!("打开失败: {}", e));
                                 } else {
-                                    self.status_message = format!("已打开: {}", folder.display());
+                                    self.set_status(format!("已打开: {}", folder.display()));
                                     self.texture = None;
                                     self.texture_dirty = true;
                                     ctx.request_repaint();
@@ -307,9 +387,9 @@ impl VcdPlayerApp {
                                     }
                                     if let Some(name) = file.file_name().and_then(|s| s.to_str()) {
                                         if let Err(e) = self.kernel.load_page(name, true) {
-                                            self.status_message = format!("加载页面失败: {}", e);
+                                            self.set_status(format!("加载页面失败: {}", e));
                                         } else {
-                                            self.status_message = format!("已加载: {}", name);
+                                            self.set_status(format!("已加载: {}", name));
                                             self.texture = None;
                                             self.texture_dirty = true;
                                             ctx.request_repaint();
@@ -326,6 +406,8 @@ impl VcdPlayerApp {
                     }
                 }
 
+                ui.separator();
+
                 if ui
                     .add_enabled(is_loaded, egui::Button::new("↺ 重置"))
                     .clicked()
@@ -339,16 +421,18 @@ impl VcdPlayerApp {
                 let mut stop_video = false;
                 if let Some(ref mut player) = self.kernel.active_video {
                     let is_playing = player.is_playing();
-                    let btn_text = if is_playing { "⏸ 暂停 (Space)" } else { "▶ 播放 (Space)" };
-                    if ui.button(btn_text).clicked() {
+                    let (play_icon, play_tooltip) = if is_playing {
+                        ("⏸", "暂停 (Space)")
+                    } else {
+                        ("▶", "播放 (Space)")
+                    };
+                    if ui.button(play_icon).on_hover_text(play_tooltip).clicked() {
                         player.toggle_play_pause();
                     }
 
-                    if ui.button("⏹ 停止并返回 (ESC)").clicked() {
+                    if ui.button("⏹").on_hover_text("停止并返回 (ESC)").clicked() {
                         stop_video = true;
                     }
-
-                    ui.separator();
 
                     let cur = player.current_time();
                     let dur = player.duration();
@@ -356,7 +440,17 @@ impl VcdPlayerApp {
                     let cur_sec = (cur % 60.0) as u32;
                     let dur_min = (dur / 60.0) as u32;
                     let dur_sec = (dur % 60.0) as u32;
-                    ui.label(format!("{:02}:{:02} / {:02}:{:02}", cur_min, cur_sec, dur_min, dur_sec));
+                    let time_text = format!("{:02}:{:02} / {:02}:{:02}", cur_min, cur_sec, dur_min, dur_sec);
+
+                    let font_id = egui::TextStyle::Monospace.resolve(ui.style());
+                    let time_galley = ui.painter().layout_no_wrap(
+                        time_text.clone(),
+                        font_id,
+                        ui.visuals().text_color(),
+                    );
+                    let time_width = time_galley.size().x;
+                    let slider_width = (ui.available_width() - time_width - ui.spacing().item_spacing.x - 2.0).max(40.0);
+                    ui.spacing_mut().slider_width = slider_width;
 
                     let mut seek_pos = cur;
                     let slider = egui::Slider::new(&mut seek_pos, 0.0..=dur.max(1.0))
@@ -366,27 +460,38 @@ impl VcdPlayerApp {
                         player.seek(seek_pos);
                     }
 
-                    ui.separator();
-
-                    let (w, h) = player.dimensions();
-                    let fps = player.framerate();
-                    ui.label(format!("🎬 {} ({}x{} @ {:.0}fps)", player.filename, w, h, fps));
+                    ui.label(egui::RichText::new(time_text).monospace());
                 } else {
-                    ui.add_enabled(false, egui::Button::new("▶ 播放 (Space)"));
-                    ui.add_enabled(false, egui::Button::new("⏹ 停止并返回 (ESC)"));
-                    ui.separator();
-                    ui.label(egui::RichText::new("--:-- / --:--").color(Color32::DARK_GRAY));
+                    ui.add_enabled(false, egui::Button::new("▶"))
+                        .on_hover_text("播放 (Space)")
+                        .on_disabled_hover_text("播放 (Space)");
+                    ui.add_enabled(false, egui::Button::new("⏹"))
+                        .on_hover_text("停止并返回 (ESC)")
+                        .on_disabled_hover_text("停止并返回 (ESC)");
+
+                    let time_text = "--:-- / --:--";
+                    let font_id = egui::TextStyle::Monospace.resolve(ui.style());
+                    let time_galley = ui.painter().layout_no_wrap(
+                        time_text.to_string(),
+                        font_id,
+                        ui.visuals().text_color(),
+                    );
+                    let time_width = time_galley.size().x;
+                    let slider_width = (ui.available_width() - time_width - ui.spacing().item_spacing.x - 2.0).max(40.0);
+                    ui.spacing_mut().slider_width = slider_width;
+
                     let mut dummy_pos = 0.0;
                     ui.add_enabled(
                         false,
                         egui::Slider::new(&mut dummy_pos, 0.0..=1.0).show_value(false).text(""),
                     );
-                    ui.separator();
-                    ui.label(egui::RichText::new("🎬 未播放视频").color(Color32::DARK_GRAY));
+
+                    ui.label(egui::RichText::new(time_text).monospace().color(Color32::DARK_GRAY));
                 }
 
                 if stop_video {
                     let _ = self.kernel.stop_video_and_exit();
+                    self.set_status("已停止视频播放");
                     self.texture = None;
                     self.texture_dirty = true;
                     ctx.request_repaint();
@@ -405,6 +510,7 @@ impl VcdPlayerApp {
                     .clicked()
                 {
                     if let Ok(true) = self.kernel.go_back() {
+                        self.set_status(format!("已后退至: {}", self.kernel.current_page_name));
                         self.texture = None;
                         self.texture_dirty = true;
                         ctx.request_repaint();
@@ -413,6 +519,7 @@ impl VcdPlayerApp {
 
                 if ui.button("🏠 主页").clicked() {
                     if let Ok(()) = self.kernel.go_home() {
+                        self.set_status("已返回主页");
                         self.texture = None;
                         self.texture_dirty = true;
                         ctx.request_repaint();
@@ -424,6 +531,7 @@ impl VcdPlayerApp {
                     .clicked()
                 {
                     if let Ok(true) = self.kernel.go_forward() {
+                        self.set_status(format!("已前进至: {}", self.kernel.current_page_name));
                         self.texture = None;
                         self.texture_dirty = true;
                         ctx.request_repaint();
@@ -438,33 +546,36 @@ impl VcdPlayerApp {
 
                 ui.separator();
 
-                // Status text
-                let page_info = if !self.kernel.current_page_name.is_empty() {
-                    let title = self
-                        .kernel
-                        .current_page
-                        .as_ref()
-                        .map(|d| d.title.as_str())
-                        .unwrap_or("");
-                    format!("📄 {} ({})", self.kernel.current_page_name, title)
-                } else {
-                    "未载入页面".to_string()
-                };
-
-                ui.label(egui::RichText::new(page_info).strong());
-
-                ui.separator();
-                ui.label(&self.status_message);
-
+                // Unified Status Zone:
+                // 1. Status 2 (Cyan): Immediate hover target (e.g. "👉 目标: xxx")
+                // 2. Status 1 (Gray): Transient status message (e.g. "已打开: xxx", "已跳转至: xxx") for 2 seconds
+                // 3. Default:
+                //    - Empty / Idle: Guide text (e.g. "空闲 - 请点击“加载光盘”载入 VCD 光盘", "光盘已弹出，请加载光盘")
+                //    - Non-empty: [页面] · [视频]
                 if let Some(target) = &self.hovered_hotspot {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(
+                        egui::RichText::new(format!("👉 目标: {}", target))
+                            .color(Color32::from_rgb(0, 220, 255)),
+                    );
+                } else if let Some(ts) = self.status_timestamp {
+                    let elapsed = ts.elapsed();
+                    if elapsed < std::time::Duration::from_secs(2) {
                         ui.label(
-                            egui::RichText::new(format!("👉 目标: {}", target))
-                                .color(Color32::from_rgb(0, 220, 255)),
+                            egui::RichText::new(&self.status_message)
+                                .color(Color32::from_rgb(180, 180, 180)),
                         );
-                    });
+                        let remaining = std::time::Duration::from_secs(2).saturating_sub(elapsed);
+                        ctx.request_repaint_after(remaining);
+                    } else {
+                        self.render_default_status(ui);
+                    }
+                } else {
+                    self.render_default_status(ui);
                 }
             });
+
+            // Symmetrical bottom margin (6px to window frame border)
+            ui.add_space(1.0);
         });
 
         // 3. Keyboard Input Handling
@@ -776,7 +887,9 @@ impl VcdPlayerApp {
                 }
 
                 // If video is active, keep canvas completely clean (no cursor, no hotspot overlays)
-                if !self.kernel.is_video_active() {
+                if self.kernel.is_video_active() {
+                    self.hovered_hotspot = None;
+                } else {
                     // Render OSD Cursor if active (e.g. WEIGHT.CHM sex selection / height digit entry)
                     if let Some((cx, cy)) = self.kernel.cursor_pos {
                         let p1 = self.canvas_to_screen(cx, cy, display_rect);
@@ -811,7 +924,7 @@ impl VcdPlayerApp {
                     let hover_pos = ctx.input(|i| i.pointer.hover_pos());
 
                     let mut current_hit_area = None;
-                    self.hovered_hotspot = None;
+                    let prev_hovered = self.hovered_hotspot.take();
 
                     if let Some(mouse_pos) = hover_pos {
                         if let Some((cx, cy)) = self.screen_to_canvas(mouse_pos, display_rect) {
@@ -823,32 +936,46 @@ impl VcdPlayerApp {
                         }
                     }
 
+                    if prev_hovered != self.hovered_hotspot {
+                        ctx.request_repaint();
+                    }
+
                     // Handle click on hotspot
                     if response.clicked() {
                         if let Some(area) = current_hit_area {
-                            let is_wav = area.target.trim().to_uppercase().ends_with(".WAV");
+                            self.hovered_hotspot = None;
+                            let target_upper = area.target.trim().to_uppercase();
+                            let is_wav = target_upper.ends_with(".WAV");
+                            let is_video = target_upper.ends_with(".DAT")
+                                || target_upper.ends_with(".MPG")
+                                || target_upper.ends_with(".MPEG")
+                                || target_upper.starts_with("PLAYVIDEO:")
+                                || target_upper.starts_with("MPEG:");
                             match self.kernel.activate_hotspot(&area) {
                                 Ok(true) => {
                                     if is_wav {
-                                        self.status_message = format!("播放音频: {}", area.target);
+                                        self.set_status(format!("播放音频: {}", area.target));
+                                    } else if is_video || self.kernel.is_video_active() {
+                                        self.set_status(format!("播放视频: {}", area.target));
+                                        self.texture = None;
+                                        self.texture_dirty = true;
                                     } else {
-                                        self.status_message = format!("已跳转至: {}", area.target);
+                                        self.set_status(format!("已跳转至: {}", area.target));
                                         self.texture = None;
                                         self.texture_dirty = true;
                                     }
                                     ctx.request_repaint();
                                 }
                                 Ok(false) => {
-                                    self.status_message = format!("触发动作: {}", area.target);
+                                    self.set_status(format!("触发动作: {}", area.target));
                                     ctx.request_repaint();
                                 }
                                 Err(e) => {
-                                    self.status_message = format!("跳转失败: {}", e);
+                                    self.set_status(format!("跳转失败: {}", e));
                                 }
                             }
                         }
                     }
-
 
                     // Debug: Draw Hotspots overlays
                     if self.show_hotspots {
@@ -910,6 +1037,10 @@ impl VcdPlayerApp {
                         }
                     }
                 });
+
+        // Handle borderless window edge resizing and outer frame stroke
+        crate::ui::titlebar::handle_window_edge_resize(&ctx);
+        crate::ui::titlebar::paint_window_frame_border(&ctx);
     }
 }
 

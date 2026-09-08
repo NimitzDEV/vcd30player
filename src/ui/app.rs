@@ -406,7 +406,7 @@ impl VcdPlayerApp {
                     }
                 }
 
-                ui.separator();
+                ui.add(egui::Separator::default().spacing(0.0));
 
                 if ui
                     .add_enabled(is_loaded, egui::Button::new("↺ 重置"))
@@ -415,7 +415,7 @@ impl VcdPlayerApp {
                     self.reset_disc(&ctx);
                 }
 
-                ui.separator();
+                ui.add(egui::Separator::default().spacing(0.0));
 
                 // Video playback controls (persistent toolbar row: active during video, disabled when inactive)
                 let mut stop_video = false;
@@ -538,13 +538,13 @@ impl VcdPlayerApp {
                     }
                 }
 
-                ui.separator();
+                ui.add(egui::Separator::default().spacing(0.0));
 
                 // Requirement 3: 热区高亮和遥控器开关放在最底部的工具条上，在 前进按钮的后面
                 ui.checkbox(&mut self.show_hotspots, "🎯 热区高亮");
                 ui.checkbox(&mut self.show_remote, "🎮 遥控器");
 
-                ui.separator();
+                ui.add(egui::Separator::default().spacing(0.0));
 
                 // Unified Status Zone:
                 // 1. Status 2 (Cyan): Immediate hover target (e.g. "👉 目标: xxx")

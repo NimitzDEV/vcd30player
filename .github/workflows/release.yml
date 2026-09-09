@@ -53,6 +53,8 @@ jobs:
           Copy-Item README_EN.md staging/
           Copy-Item LICENSE-MIT staging/
           Copy-Item LICENSE-APACHE staging/
+          Copy-Item CHANGELOG.md staging/ -ErrorAction SilentlyContinue
+          Copy-Item CHANGELOG_CN.md staging/ -ErrorAction SilentlyContinue
           Compress-Archive -Path staging/* -DestinationPath ${{ matrix.archive }}
 
       - name: Package artifacts (Linux)
@@ -61,6 +63,7 @@ jobs:
           mkdir -p staging
           cp target/release/${{ matrix.binary }} staging/
           cp README.md README_EN.md LICENSE-MIT LICENSE-APACHE staging/
+          cp CHANGELOG.md CHANGELOG_CN.md staging/ || true
           tar -czvf ${{ matrix.archive }} -C staging .
 
       - name: Upload build archive
@@ -84,10 +87,50 @@ jobs:
           path: release-assets
           merge-multiple: true
 
+      - name: Extract Bilingual Release Notes
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          python3 -c "
+          import sys, re
+
+          tag = sys.argv[1]
+          ver = tag.lstrip('v')
+
+          def extract_section(file_path, version):
+              try:
+                  with open(file_path, 'r', encoding='utf-8') as f:
+                      content = f.read()
+              except Exception as e:
+                  print(f'Note: Could not open {file_path}: {e}', file=sys.stderr)
+                  return ''
+              pattern = rf'## \[{re.escape(version)}\][^\n]*\n(.*?)(?=\n## \[|\Z)'
+              m = re.search(pattern, content, re.DOTALL)
+              if not m:
+                  print(f'Note: Version {version} not found in {file_path}', file=sys.stderr)
+                  return ''
+              notes = m.group(1).strip()
+              notes = re.sub(r'(?:\r?\n\s*---\s*)+\Z', '', notes).strip()
+              return notes
+
+          cn_notes = extract_section('CHANGELOG_CN.md', ver)
+          en_notes = extract_section('CHANGELOG.md', ver)
+
+          release_body = []
+          if cn_notes:
+              release_body.append(f'## {tag} 更新\n\n' + cn_notes)
+          if en_notes:
+              release_body.append(f'## {tag} Update\n\n' + en_notes)
+
+          final_body = '\n\n---\n\n'.join(release_body)
+          with open('RELEASE_NOTES.md', 'w', encoding='utf-8') as f:
+              f.write(final_body + '\n')
+          " "$TAG"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: release-assets/*
-          generate_release_notes: true
+          body_path: RELEASE_NOTES.md
           draft: false
           prerelease: false

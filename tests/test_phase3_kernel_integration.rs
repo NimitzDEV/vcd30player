@@ -27,6 +27,12 @@ fn test_kernel_tb_script_and_hotspot_routing() {
     let activated = kernel.activate_hotspot(&area).unwrap();
     assert!(activated);
 
+    // Fast-forward VM past DRAWIMAGE 300ms display delay
+    while kernel.is_vm_active() {
+        kernel.start_time -= std::time::Duration::from_millis(400);
+        kernel.run_vm();
+    }
+
     // Verify script updated variable A = 1
     assert_eq!(kernel.vm.get_variable(b'A'), 1);
 
@@ -88,8 +94,17 @@ fn test_kernel_weight_interactive_script_and_remote_keys() {
     ));
     assert_eq!(kernel.cursor_pos, Some((272, 123)));
 
+    let send_key = |kernel: &mut VcdKernel, key: i32| {
+        let mut state = kernel.inject_remote_key(key);
+        while kernel.is_vm_active() {
+            kernel.start_time -= std::time::Duration::from_millis(400);
+            state = kernel.run_vm();
+        }
+        state
+    };
+
     // Press Confirm (31) on Man -> sets S = 1, enters line 200, waits for height input!
-    let state_enter = kernel.inject_remote_key(31);
+    let state_enter = send_key(&mut kernel, 31);
     assert_eq!(kernel.vm.get_variable(b'S'), 1);
     assert!(matches!(
         state_enter,
@@ -97,9 +112,9 @@ fn test_kernel_weight_interactive_script_and_remote_keys() {
     ));
 
     // Enter height digits: 1, 7, 5
-    kernel.inject_remote_key(1);
-    kernel.inject_remote_key(7);
-    let state_h = kernel.inject_remote_key(5);
+    send_key(&mut kernel, 1);
+    send_key(&mut kernel, 7);
+    let state_h = send_key(&mut kernel, 5);
     assert_eq!(kernel.vm.get_variable(b'H'), 175);
     // Now waiting for weight input at line 5000: CALL IRKEY(K)
     assert!(matches!(
@@ -108,8 +123,8 @@ fn test_kernel_weight_interactive_script_and_remote_keys() {
     ));
 
     // Enter weight digits: 6, 5, then Confirm (31)
-    kernel.inject_remote_key(6);
-    kernel.inject_remote_key(5);
+    send_key(&mut kernel, 6);
+    send_key(&mut kernel, 5);
     let state_calc = kernel.inject_remote_key(31);
     assert_eq!(kernel.vm.get_variable(b'W'), 65);
 

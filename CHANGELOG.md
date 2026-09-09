@@ -26,6 +26,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   - Unified horizontal spacing between toolbar elements and vertical separators to `8.0px`.
 
 ### Fixed
+- **Interactive Script Animation Display Delay**:
+  - Implemented the standard 300ms display delay on `DRAWIMAGE` statements in the script virtual machine, enabling multi-frame interactive animations (e.g. target hit sequences, star score tallying) to render smoothly and synchronize with audio effects.
+  - Suppressed hotspot mouse hover and click interactions while the script virtual machine is actively executing delays or animations to prevent interrupting playback.
+  - Optimized GUI canvas texture refresh to update in-place without redundant GPU texture handle reallocations.
 - **Hover Target Cleanup**:
   - Cleared active hotspot hover indicators immediately upon clicking DAT video targets and during active video playback.
 - **Audio Initialization in Headless Environments**:

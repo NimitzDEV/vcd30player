@@ -306,7 +306,6 @@ impl VcdPlayerApp {
         } else {
             if self.kernel.is_vm_active() {
                 self.kernel.run_vm();
-                self.texture = None;
                 self.texture_dirty = true;
                 ctx.request_repaint();
             }
@@ -926,12 +925,14 @@ impl VcdPlayerApp {
                     let mut current_hit_area = None;
                     let prev_hovered = self.hovered_hotspot.take();
 
-                    if let Some(mouse_pos) = hover_pos {
-                        if let Some((cx, cy)) = self.screen_to_canvas(mouse_pos, display_rect) {
-                            if let Some(area) = self.kernel.hit_test(cx, cy) {
-                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                                self.hovered_hotspot = Some(area.target.clone());
-                                current_hit_area = Some(area.clone());
+                    if !self.kernel.is_vm_active() {
+                        if let Some(mouse_pos) = hover_pos {
+                            if let Some((cx, cy)) = self.screen_to_canvas(mouse_pos, display_rect) {
+                                if let Some(area) = self.kernel.hit_test(cx, cy) {
+                                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                    self.hovered_hotspot = Some(area.target.clone());
+                                    current_hit_area = Some(area.clone());
+                                }
                             }
                         }
                     }
@@ -941,7 +942,7 @@ impl VcdPlayerApp {
                     }
 
                     // Handle click on hotspot
-                    if response.clicked() {
+                    if response.clicked() && !self.kernel.is_vm_active() {
                         if let Some(area) = current_hit_area {
                             self.hovered_hotspot = None;
                             let target_upper = area.target.trim().to_uppercase();

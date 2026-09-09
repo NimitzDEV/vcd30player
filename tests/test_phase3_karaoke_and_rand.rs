@@ -151,7 +151,11 @@ fn test_typo_resilience_kraroke_and_drawimgae() {
     let mut host = MockKaraokeHost::default();
 
     vm.load_program(prog);
-    let state = vm.run_until_yield(&mut host);
+    let mut state = vm.run_until_yield(&mut host);
+    while matches!(state, VmState::WaitingForDelay { .. }) {
+        host.time_units += 4;
+        state = vm.run_until_yield(&mut host);
+    }
 
     assert_eq!(state, VmState::Finished);
     assert_eq!(vm.get_variable(b'N'), 5);
@@ -174,7 +178,11 @@ fn test_kara_pr1_and_kara_2_disc_integration() {
 
     // Simulate clicking song button 1010 (Song B=4) -> line 2000 SET KARAOKE
     kernel.vm.start_at_line(1010);
-    let state_song = kernel.run_vm();
+    let mut state_song = kernel.run_vm();
+    while kernel.is_vm_active() {
+        kernel.start_time -= std::time::Duration::from_millis(400);
+        state_song = kernel.run_vm();
+    }
     assert_eq!(state_song, VmState::Finished);
     assert_eq!(kernel.karaoke_playlist.len(), 1);
     assert_eq!(kernel.karaoke_playlist[0], 4);
@@ -224,6 +232,10 @@ fn test_kara_1_sequential_playback_flow() {
 
     // 2. Navigate to KARA_P1.CHM (sequential player)
     kernel.load_page("KARA_P1.CHM", true).unwrap();
+    while matches!(kernel.vm.state, VmState::WaitingForDelay { .. }) {
+        kernel.start_time -= std::time::Duration::from_millis(400);
+        kernel.run_vm();
+    }
     // At line 610, it should be waiting for key with 1-second timeout
     assert!(matches!(
         kernel.vm.state,
@@ -240,6 +252,10 @@ fn test_kara_1_sequential_playback_flow() {
 
     // 3. Stop video (simulate playback end)
     kernel.stop_video_and_exit().unwrap();
+    while matches!(kernel.vm.state, VmState::WaitingForDelay { .. }) {
+        kernel.start_time -= std::time::Duration::from_millis(400);
+        kernel.run_vm();
+    }
     // on_video_finished() should reset PC to Entry 1 (Line 20)
     // Line 20 reads B=1, increments to B=2, sets song 5 (MUSIC05.DAT), sets B=2, enters wait loop!
     assert!(matches!(
@@ -254,6 +270,10 @@ fn test_kara_1_sequential_playback_flow() {
     let state = kernel.run_vm();
     assert_eq!(state, VmState::WaitingForVideo);
     kernel.stop_video_and_exit().unwrap();
+    while matches!(kernel.vm.state, VmState::WaitingForDelay { .. }) {
+        kernel.start_time -= std::time::Duration::from_millis(400);
+        kernel.run_vm();
+    }
 
     // Line 20 reads B=2, increments to B=3, sets song 6 (MUSIC06.DAT)...
     assert!(matches!(

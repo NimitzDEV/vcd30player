@@ -144,9 +144,12 @@ fn test_vm_tb_script_execution() {
     assert_eq!(vm.get_variable(b'B'), 0);
 
     // Simulate clicking Option 1 (Line 100)
-    // 100 DRAWIMAGE "T_B.YBM",0,0,0 : 105 A = 1 : 106 GOSUB 9000 : 107 GOSUB 9030 ...
     vm.start_at_line(100);
-    let state100 = vm.run_until_yield(&mut host);
+    let mut state100 = vm.run_until_yield(&mut host);
+    while matches!(state100, VmState::WaitingForDelay { .. }) {
+        host.time_ms += 400;
+        state100 = vm.run_until_yield(&mut host);
+    }
     assert_eq!(state100, VmState::Finished);
     assert_eq!(vm.get_variable(b'A'), 1);
 

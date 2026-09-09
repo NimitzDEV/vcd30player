@@ -226,7 +226,9 @@ impl VcdScriptVm {
                 let mode_val = mode.eval(&self.variables);
                 host.draw_image(&file, x_val, y_val, mode_val);
                 self.pc = next_pc;
-                self.state = VmState::Running;
+                self.state = VmState::WaitingForDelay {
+                    until_time: host.get_time_units() + 3,
+                };
             }
             Statement::PlaySound(file) => {
                 host.play_sound(&file);
@@ -459,7 +461,9 @@ impl VcdScriptVm {
                 let mode_val = mode.eval(&self.variables);
                 host.draw_image(&file, x_val, y_val, mode_val);
                 self.pc = fallback_next_pc;
-                self.state = VmState::Running;
+                self.state = VmState::WaitingForDelay {
+                    until_time: host.get_time_units() + 3,
+                };
             }
             Statement::PlaySound(file) => {
                 host.play_sound(&file);

@@ -86,6 +86,28 @@ impl fmt::Display for VcdDiscType {
     }
 }
 
+impl VcdDiscType {
+    /// Returns true if this disc format supports VCD 3.0 Interactive mode.
+    pub fn supports_vcd30(&self) -> bool {
+        matches!(self, VcdDiscType::Vcd30Interactive { .. })
+    }
+
+    /// Returns true if this disc format supports VCD 2.0 Classic mode.
+    pub fn supports_vcd20(&self) -> bool {
+        matches!(
+            self,
+            VcdDiscType::Vcd30Interactive { .. }
+                | VcdDiscType::Vcd20WithPbc { .. }
+                | VcdDiscType::Vcd20Linear { .. }
+        )
+    }
+
+    /// Returns true if this disc format supports VCD 1.0 Linear mode.
+    pub fn supports_vcd10(&self) -> bool {
+        !matches!(self, VcdDiscType::Unknown)
+    }
+}
+
 /// Finds a file or folder path case-insensitively given path segments.
 pub fn find_path_ci(root: &Path, rel_parts: &[&str]) -> Option<PathBuf> {
     let mut current = root.to_path_buf();

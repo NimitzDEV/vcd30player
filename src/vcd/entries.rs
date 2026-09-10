@@ -17,9 +17,9 @@ pub struct VcdEntry {
 }
 
 impl VcdEntry {
-    /// Formats the MSF time as a standard MM:SS:FF string.
+    /// Formats the MSF time as a standard MM:SS.FF string.
     pub fn msf_string(&self) -> String {
-        format!("{:02}:{:02}:{:02}", self.min, self.sec, self.frame)
+        format!("{:02}:{:02}.{:02}", self.min, self.sec, self.frame)
     }
 
     /// Converts the MSF time to total seconds (including fractional frames).
@@ -150,7 +150,7 @@ mod tests {
         assert_eq!(e1.min, 1);
         assert_eq!(e1.sec, 23);
         assert_eq!(e1.frame, 45);
-        assert_eq!(e1.msf_string(), "01:23:45");
+        assert_eq!(e1.msf_string(), "01:23.45");
         let expected_sec = 1.0 * 60.0 + 23.0 + 45.0 / 75.0;
         assert!((e1.total_seconds() - expected_sec).abs() < 1e-6);
 
@@ -160,7 +160,7 @@ mod tests {
         assert_eq!(e2.min, 5);
         assert_eq!(e2.sec, 12);
         assert_eq!(e2.frame, 0);
-        assert_eq!(e2.msf_string(), "05:12:00");
+        assert_eq!(e2.msf_string(), "05:12.00");
     }
 
     #[test]
@@ -178,13 +178,13 @@ mod tests {
             let first = &entries.entries[0];
             assert_eq!(first.index, 1);
             assert_eq!(first.track_no, 2);
-            assert_eq!(first.msf_string(), "05:02:70");
+            assert_eq!(first.msf_string(), "05:02.70");
 
             // 27th entry
             let last = &entries.entries[26];
             assert_eq!(last.index, 27);
             assert_eq!(last.track_no, 28);
-            assert_eq!(last.msf_string(), "24:00:62");
+            assert_eq!(last.msf_string(), "24:00.62");
         }
     }
 }

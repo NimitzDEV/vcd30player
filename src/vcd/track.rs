@@ -104,7 +104,7 @@ mod tests {
                 assert_eq!(tracks.len(), 27, "Live disc should have exactly 27 tracks");
                 assert_eq!(tracks[0].title, "MUSIC01.DAT");
                 assert_eq!(tracks[26].title, "MUSIC27.DAT");
-                assert_eq!(tracks[0].msf_start.as_deref(), Some("05:02:70"));
+                assert_eq!(tracks[0].msf_start.as_deref(), Some("05:02.70"));
             }
         }
     }

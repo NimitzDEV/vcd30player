@@ -191,6 +191,12 @@ impl VcdPlayerApp {
                 } else {
                     format!("📄 {} ({})", self.kernel.current_page_name, title)
                 }
+            } else if let Some(idx) = self.kernel.current_track_index {
+                if let Some(t) = self.kernel.tracks.get(idx) {
+                    format!("🎵 轨道 {:02} ({})", t.index, t.title)
+                } else {
+                    "未载入页面".to_string()
+                }
             } else {
                 "未载入页面".to_string()
             };
@@ -250,6 +256,8 @@ impl VcdPlayerApp {
         self.kernel.tracks.clear();
         self.kernel.current_track_index = None;
         self.kernel.active_mode = crate::core::kernel::ActiveDiscMode::Vcd30Interactive;
+        self.kernel.pbc = None;
+        self.kernel.pbc_digit_buffer.clear();
         self.kernel.vm.terminate();
         self.texture = None;
         self.texture_dirty = true;
@@ -302,6 +310,33 @@ impl VcdPlayerApp {
                 ctx.request_repaint();
             }
         }
+    }
+
+    /// Injects a remote control key and synchronizes status and canvas.
+    pub fn send_remote_key(&mut self, key: i32, ctx: &egui::Context) {
+        let old_track = self.kernel.current_track_index;
+        let old_page = self.kernel.current_page_name.clone();
+        self.kernel.inject_remote_key(key);
+        if !self.kernel.pbc_digit_buffer.is_empty() {
+            let buf_str: String = self
+                .kernel
+                .pbc_digit_buffer
+                .iter()
+                .map(|d| d.to_string())
+                .collect();
+            self.set_status(format!("输入曲目: {} (按 Enter 确认或等待)", buf_str));
+        } else if self.kernel.current_track_index != old_track {
+            if let Some(idx) = self.kernel.current_track_index {
+                if let Some(t) = self.kernel.tracks.get(idx) {
+                    self.set_status(format!("正在播放: 轨道 {:02} ({})", t.index, t.title));
+                }
+            }
+        } else if self.kernel.current_page_name != old_page && !self.kernel.current_page_name.is_empty() {
+            self.set_status(format!("已切换至: {}", self.kernel.current_page_name));
+        }
+        self.texture = None;
+        self.texture_dirty = true;
+        ctx.request_repaint();
     }
 
     /// Triggers texture upload from video player current frame to GPU.
@@ -369,6 +404,20 @@ impl VcdPlayerApp {
     pub fn show(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
 
+        // Check for numeric input buffer timeout (e.g. 2.0s without Enter)
+        if let Ok(true) = self.kernel.check_pbc_digit_timeout() {
+            if let Some(idx) = self.kernel.current_track_index {
+                if let Some(t) = self.kernel.tracks.get(idx) {
+                    self.set_status(format!("正在播放: 轨道 {:02} ({})", t.index, t.title));
+                }
+            }
+            self.texture = None;
+            self.texture_dirty = true;
+            ctx.request_repaint();
+        } else if !self.kernel.pbc_digit_buffer.is_empty() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
+
         // Drive video playback or active VM
         if self.kernel.is_video_active() {
             self.hovered_hotspot = None;
@@ -406,6 +455,12 @@ impl VcdPlayerApp {
                 format!("vcd30player - {}", self.kernel.current_page_name)
             } else {
                 format!("vcd30player - {} ({})", self.kernel.current_page_name, title)
+            }
+        } else if let Some(idx) = self.kernel.current_track_index {
+            if let Some(t) = self.kernel.tracks.get(idx) {
+                format!("vcd30player - 轨道 {:02} ({})", t.index, t.title)
+            } else {
+                "vcd30player".to_string()
             }
         } else {
             "vcd30player".to_string()
@@ -516,49 +571,64 @@ impl VcdPlayerApp {
                             ui.visuals_mut().widgets.inactive.corner_radius = egui::CornerRadius::same(3);
                             ui.visuals_mut().widgets.hovered.corner_radius = egui::CornerRadius::same(3);
 
-                            let is_vcd30 = matches!(
-                                self.kernel.disc_type,
-                                Some(crate::vcd::VcdDiscType::Vcd30Interactive { .. })
-                            );
+                            let supports_vcd30 = self.kernel.supports_vcd30();
+                            let supports_vcd20 = self.kernel.supports_vcd20();
+                            let supports_vcd10 = self.kernel.supports_vcd10();
                             let cur_mode = self.kernel.active_mode;
+                            let mut option_count = 0;
 
-                            if is_vcd30 {
-                                if cur_mode == crate::core::kernel::ActiveDiscMode::Vcd30Interactive {
-                                    if ui.button("🎬 重置并使用 VCD 2.0 模式播放").clicked() {
-                                        ui.close();
-                                        if let Err(e) = self.kernel.switch_active_mode(crate::core::kernel::ActiveDiscMode::Vcd20Classic) {
-                                            self.set_status(format!("切换失败: {}", e));
-                                        } else {
-                                            self.set_status("已切换至 VCD 2.0 经典模式");
-                                            self.texture = None;
-                                            self.texture_dirty = true;
-                                            ctx.request_repaint();
-                                        }
-                                    }
-                                    if ui.button("📺 重置并使用 VCD 1.0 模式播放").clicked() {
-                                        ui.close();
-                                        if let Err(e) = self.kernel.switch_active_mode(crate::core::kernel::ActiveDiscMode::Vcd10Linear) {
-                                            self.set_status(format!("切换失败: {}", e));
-                                        } else {
-                                            self.set_status("已切换至 VCD 1.0 纯视频模式");
-                                            self.texture = None;
-                                            self.texture_dirty = true;
-                                            ctx.request_repaint();
-                                        }
-                                    }
-                                } else {
-                                    if ui.button("💿 重置并恢复 VCD 3.0 互动模式").clicked() {
-                                        ui.close();
-                                        if let Err(e) = self.kernel.switch_active_mode(crate::core::kernel::ActiveDiscMode::Vcd30Interactive) {
-                                            self.set_status(format!("恢复失败: {}", e));
-                                        } else {
-                                            self.set_status("已恢复 VCD 3.0 互动模式");
-                                            self.texture = None;
-                                            self.texture_dirty = true;
-                                            ctx.request_repaint();
-                                        }
+                            if supports_vcd30 && cur_mode != crate::core::kernel::ActiveDiscMode::Vcd30Interactive {
+                                option_count += 1;
+                                if ui.button("💿 重置并恢复 VCD 3.0 互动模式").clicked() {
+                                    ui.close();
+                                    if let Err(e) = self.kernel.switch_active_mode(crate::core::kernel::ActiveDiscMode::Vcd30Interactive) {
+                                        self.set_status(format!("恢复失败: {}", e));
+                                    } else {
+                                        self.set_status("已恢复 VCD 3.0 互动模式");
+                                        self.texture = None;
+                                        self.texture_dirty = true;
+                                        ctx.request_repaint();
                                     }
                                 }
+                            }
+
+                            if supports_vcd20 && cur_mode != crate::core::kernel::ActiveDiscMode::Vcd20Classic {
+                                option_count += 1;
+                                let label = if cur_mode == crate::core::kernel::ActiveDiscMode::Vcd10Linear && !supports_vcd30 {
+                                    "🎬 重置并恢复 VCD 2.0 经典模式"
+                                } else {
+                                    "🎬 重置并使用 VCD 2.0 模式播放"
+                                };
+                                if ui.button(label).clicked() {
+                                    ui.close();
+                                    if let Err(e) = self.kernel.switch_active_mode(crate::core::kernel::ActiveDiscMode::Vcd20Classic) {
+                                        self.set_status(format!("切换失败: {}", e));
+                                    } else {
+                                        self.set_status("已切换至 VCD 2.0 经典模式");
+                                        self.texture = None;
+                                        self.texture_dirty = true;
+                                        ctx.request_repaint();
+                                    }
+                                }
+                            }
+
+                            if supports_vcd10 && cur_mode != crate::core::kernel::ActiveDiscMode::Vcd10Linear {
+                                option_count += 1;
+                                if ui.button("📺 重置并使用 VCD 1.0 模式播放").clicked() {
+                                    ui.close();
+                                    if let Err(e) = self.kernel.switch_active_mode(crate::core::kernel::ActiveDiscMode::Vcd10Linear) {
+                                        self.set_status(format!("切换失败: {}", e));
+                                    } else {
+                                        self.set_status("已切换至 VCD 1.0 纯视频模式");
+                                        self.texture = None;
+                                        self.texture_dirty = true;
+                                        ctx.request_repaint();
+                                    }
+                                }
+                            }
+
+                            if option_count == 0 {
+                                ui.label("当前已是唯一的可用模式");
                             }
                         });
                     });
@@ -603,6 +673,9 @@ impl VcdPlayerApp {
                     {
                         let idx = self.kernel.current_track_index.unwrap_or(0);
                         let _ = self.kernel.play_track(idx);
+                        if let Some(t) = self.kernel.tracks.get(idx) {
+                            self.set_status(format!("正在播放: 轨道 {:02} ({})", t.index, t.title));
+                        }
                         self.texture = None;
                         self.texture_dirty = true;
                         ctx.request_repaint();
@@ -714,6 +787,11 @@ impl VcdPlayerApp {
 
                 if prev_track {
                     let _ = self.kernel.play_prev_track();
+                    if let Some(idx) = self.kernel.current_track_index {
+                        if let Some(t) = self.kernel.tracks.get(idx) {
+                            self.set_status(format!("正在播放: 轨道 {:02} ({})", t.index, t.title));
+                        }
+                    }
                     self.texture = None;
                     self.texture_dirty = true;
                     ctx.request_repaint();
@@ -721,14 +799,30 @@ impl VcdPlayerApp {
 
                 if next_track {
                     let _ = self.kernel.play_next_track(false);
+                    if let Some(idx) = self.kernel.current_track_index {
+                        if let Some(t) = self.kernel.tracks.get(idx) {
+                            self.set_status(format!("正在播放: 轨道 {:02} ({})", t.index, t.title));
+                        }
+                    }
                     self.texture = None;
                     self.texture_dirty = true;
                     ctx.request_repaint();
                 }
 
                 if stop_video {
-                    let _ = self.kernel.stop_video_and_exit();
-                    self.set_status("已停止视频播放");
+                    if self.kernel.active_mode == crate::core::kernel::ActiveDiscMode::Vcd20Classic
+                        && self.kernel.pbc.is_some()
+                    {
+                        let _ = self.kernel.handle_pbc_return();
+                        if !self.kernel.current_page_name.is_empty() {
+                            self.set_status(format!("已返回: {}", self.kernel.current_page_name));
+                        } else {
+                            self.set_status("已停止视频播放");
+                        }
+                    } else {
+                        let _ = self.kernel.stop_video_and_exit();
+                        self.set_status("已停止视频播放");
+                    }
                     self.texture = None;
                     self.texture_dirty = true;
                     ctx.request_repaint();
@@ -741,44 +835,63 @@ impl VcdPlayerApp {
             ui.horizontal(|ui| {
                 let is_loaded = self.is_disc_loaded();
                 let is_vcd30 = is_loaded && self.kernel.active_mode == crate::core::kernel::ActiveDiscMode::Vcd30Interactive;
-                let can_back = is_vcd30 && !self.kernel.history_stack.is_empty();
-                let can_fwd = is_vcd30 && !self.kernel.forward_stack.is_empty();
-                let can_home = is_vcd30;
+                let is_vcd20 = is_loaded && self.kernel.active_mode == crate::core::kernel::ActiveDiscMode::Vcd20Classic;
 
-                if ui
-                    .add_enabled(can_back, egui::Button::new("⏮ 后退"))
-                    .clicked()
-                {
-                    if let Ok(true) = self.kernel.go_back() {
-                        self.set_status(format!("已后退至: {}", self.kernel.current_page_name));
-                        self.texture = None;
-                        self.texture_dirty = true;
-                        ctx.request_repaint();
+                if is_vcd20 {
+                    if ui
+                        .add_enabled(is_loaded, egui::Button::new("PBC"))
+                        .on_hover_text("呼出/返回 PBC 播放控制菜单")
+                        .clicked()
+                    {
+                        if let Err(e) = self.kernel.trigger_pbc_menu() {
+                            self.set_status(format!("PBC: {}", e));
+                        } else {
+                            self.set_status("已呼出 PBC 菜单");
+                            self.texture = None;
+                            self.texture_dirty = true;
+                            ctx.request_repaint();
+                        }
                     }
-                }
+                } else {
+                    let can_back = is_vcd30 && !self.kernel.history_stack.is_empty();
+                    let can_fwd = is_vcd30 && !self.kernel.forward_stack.is_empty();
+                    let can_home = is_vcd30;
 
-                if ui
-                    .add_enabled(can_home, egui::Button::new("🏠 主页"))
-                    .on_hover_text("返回主页")
-                    .clicked()
-                {
-                    if let Ok(()) = self.kernel.go_home() {
-                        self.set_status("已返回主页");
-                        self.texture = None;
-                        self.texture_dirty = true;
-                        ctx.request_repaint();
+                    if ui
+                        .add_enabled(can_back, egui::Button::new("⏮ 后退"))
+                        .clicked()
+                    {
+                        if let Ok(true) = self.kernel.go_back() {
+                            self.set_status(format!("已后退至: {}", self.kernel.current_page_name));
+                            self.texture = None;
+                            self.texture_dirty = true;
+                            ctx.request_repaint();
+                        }
                     }
-                }
 
-                if ui
-                    .add_enabled(can_fwd, egui::Button::new("⏭ 前进"))
-                    .clicked()
-                {
-                    if let Ok(true) = self.kernel.go_forward() {
-                        self.set_status(format!("已前进至: {}", self.kernel.current_page_name));
-                        self.texture = None;
-                        self.texture_dirty = true;
-                        ctx.request_repaint();
+                    if ui
+                        .add_enabled(can_home, egui::Button::new("🏠 主页"))
+                        .on_hover_text("返回主页")
+                        .clicked()
+                    {
+                        if let Ok(()) = self.kernel.go_home() {
+                            self.set_status("已返回主页");
+                            self.texture = None;
+                            self.texture_dirty = true;
+                            ctx.request_repaint();
+                        }
+                    }
+
+                    if ui
+                        .add_enabled(can_fwd, egui::Button::new("⏭ 前进"))
+                        .clicked()
+                    {
+                        if let Ok(true) = self.kernel.go_forward() {
+                            self.set_status(format!("已前进至: {}", self.kernel.current_page_name));
+                            self.texture = None;
+                            self.texture_dirty = true;
+                            ctx.request_repaint();
+                        }
                     }
                 }
 
@@ -838,6 +951,7 @@ impl VcdPlayerApp {
             let mut toggle_pause = false;
             let mut stop_video = false;
             let mut seek_delta = 0.0;
+            let mut num_pressed = None;
 
             ctx.input(|i| {
                 if i.key_pressed(egui::Key::Space) {
@@ -848,8 +962,37 @@ impl VcdPlayerApp {
                     seek_delta = -5.0;
                 } else if i.key_pressed(egui::Key::ArrowRight) {
                     seek_delta = 5.0;
+                } else if self.kernel.active_mode == crate::core::kernel::ActiveDiscMode::Vcd20Classic
+                    || self.kernel.active_mode == crate::core::kernel::ActiveDiscMode::Vcd10Linear
+                {
+                    if i.key_pressed(egui::Key::Enter) {
+                        num_pressed = Some(31);
+                    } else {
+                        let num_keys = [
+                            (egui::Key::Num0, 0),
+                            (egui::Key::Num1, 1),
+                            (egui::Key::Num2, 2),
+                            (egui::Key::Num3, 3),
+                            (egui::Key::Num4, 4),
+                            (egui::Key::Num5, 5),
+                            (egui::Key::Num6, 6),
+                            (egui::Key::Num7, 7),
+                            (egui::Key::Num8, 8),
+                            (egui::Key::Num9, 9),
+                        ];
+                        for (k, val) in num_keys {
+                            if i.key_pressed(k) {
+                                num_pressed = Some(val);
+                                break;
+                            }
+                        }
+                    }
                 }
             });
+
+            if let Some(num) = num_pressed {
+                self.send_remote_key(num, &ctx);
+            }
 
             if toggle_pause {
                 if let Some(ref mut player) = self.kernel.active_video {
@@ -857,7 +1000,13 @@ impl VcdPlayerApp {
                 }
             }
             if stop_video {
-                let _ = self.kernel.stop_video_and_exit();
+                if self.kernel.active_mode == crate::core::kernel::ActiveDiscMode::Vcd20Classic
+                    && self.kernel.pbc.is_some()
+                {
+                    let _ = self.kernel.handle_pbc_return();
+                } else {
+                    let _ = self.kernel.stop_video_and_exit();
+                }
                 self.texture = None;
                 self.texture_dirty = true;
                 ctx.request_repaint();
@@ -906,8 +1055,7 @@ impl VcdPlayerApp {
             });
 
             if let Some(key) = remote_key {
-                self.kernel.inject_remote_key(key);
-                self.texture_dirty = true;
+                self.send_remote_key(key, &ctx);
             }
         }
 
@@ -993,8 +1141,7 @@ impl VcdPlayerApp {
                                     .add(egui::Button::new("▲ 上").min_size(dpad_btn_size))
                                     .clicked()
                                 {
-                                    self.kernel.inject_remote_key(34);
-                                    self.texture_dirty = true;
+                                    self.send_remote_key(34, &ctx);
                                 }
                                 ui.label("");
                                 ui.end_row();
@@ -1003,22 +1150,19 @@ impl VcdPlayerApp {
                                     .add(egui::Button::new("◀ 左").min_size(dpad_btn_size))
                                     .clicked()
                                 {
-                                    self.kernel.inject_remote_key(36);
-                                    self.texture_dirty = true;
+                                    self.send_remote_key(36, &ctx);
                                 }
                                 if ui
                                     .add(egui::Button::new("确定").min_size(dpad_btn_size))
                                     .clicked()
                                 {
-                                    self.kernel.inject_remote_key(31);
-                                    self.texture_dirty = true;
+                                    self.send_remote_key(31, &ctx);
                                 }
                                 if ui
                                     .add(egui::Button::new("右 ▶").min_size(dpad_btn_size))
                                     .clicked()
                                 {
-                                    self.kernel.inject_remote_key(37);
-                                    self.texture_dirty = true;
+                                    self.send_remote_key(37, &ctx);
                                 }
                                 ui.end_row();
 
@@ -1027,8 +1171,7 @@ impl VcdPlayerApp {
                                     .add(egui::Button::new("▼ 下").min_size(dpad_btn_size))
                                     .clicked()
                                 {
-                                    self.kernel.inject_remote_key(35);
-                                    self.texture_dirty = true;
+                                    self.send_remote_key(35, &ctx);
                                 }
                                 ui.label("");
                                 ui.end_row();
@@ -1045,8 +1188,7 @@ impl VcdPlayerApp {
                             )
                             .clicked()
                         {
-                            self.kernel.inject_remote_key(32);
-                            self.texture_dirty = true;
+                            self.send_remote_key(32, &ctx);
                         }
                     });
 
@@ -1074,8 +1216,7 @@ impl VcdPlayerApp {
                                             )
                                             .clicked()
                                         {
-                                            self.kernel.inject_remote_key(num);
-                                            self.texture_dirty = true;
+                                            self.send_remote_key(num, &ctx);
                                         }
                                     }
                                     ui.end_row();
@@ -1085,8 +1226,7 @@ impl VcdPlayerApp {
                                     .add(egui::Button::new("0").min_size(num_btn_size))
                                     .clicked()
                                 {
-                                    self.kernel.inject_remote_key(0);
-                                    self.texture_dirty = true;
+                                    self.send_remote_key(0, &ctx);
                                 }
                                 ui.label("");
                                 ui.end_row();

@@ -379,6 +379,9 @@ pub struct VcdKernel {
     pub active_mode: ActiveDiscMode,
     pub tracks: Vec<crate::vcd::DiscTrackInfo>,
     pub current_track_index: Option<usize>,
+    pub pbc: Option<crate::vcd::PbcEngine>,
+    pub pbc_digit_buffer: Vec<u8>,
+    pub pbc_digit_timestamp: Option<Instant>,
 }
 
 impl VcdKernel {
@@ -412,6 +415,9 @@ impl VcdKernel {
             active_mode: ActiveDiscMode::Vcd30Interactive,
             tracks: Vec::new(),
             current_track_index: None,
+            pbc: None,
+            pbc_digit_buffer: Vec::new(),
+            pbc_digit_timestamp: None,
         }
     }
 
@@ -609,6 +615,8 @@ impl VcdKernel {
         self.forward_stack.clear();
         self.sprite_cache.clear();
         self.karaoke_playlist.clear();
+        self.pbc = None;
+        self.pbc_digit_buffer.clear();
 
         let disc_type = crate::vcd::detect_disc(&self.disc_root);
         self.disc_type = Some(disc_type.clone());
@@ -655,8 +663,16 @@ impl VcdKernel {
                     let _ = self.start_video(mpeg_name, 0, 0, Some(initial_page.clone()));
                 }
             }
+        } else if self.active_mode == ActiveDiscMode::Vcd20Classic {
+            self.current_page = None;
+            self.current_page_name.clear();
+            if let Err(_) = self.start_pbc() {
+                if !self.tracks.is_empty() {
+                    self.play_track(0)?;
+                }
+            }
         } else {
-            // VCD 2.0 or VCD 1.0 mode: start playing first track if available
+            // VCD 1.0 mode: start playing first track if available
             self.current_page = None;
             self.current_page_name.clear();
             if !self.tracks.is_empty() {
@@ -822,6 +838,22 @@ impl VcdKernel {
         }
     }
 
+    /// Checks if current disc supports VCD 3.0 Interactive mode.
+    pub fn supports_vcd30(&self) -> bool {
+        self.disc_type.as_ref().map(|d| d.supports_vcd30()).unwrap_or(false)
+    }
+
+    /// Checks if current disc supports VCD 2.0 Classic mode.
+    pub fn supports_vcd20(&self) -> bool {
+        self.disc_type.as_ref().map(|d| d.supports_vcd20()).unwrap_or(false)
+    }
+
+    /// Checks if current disc supports VCD 1.0 Linear mode.
+    pub fn supports_vcd10(&self) -> bool {
+        !self.tracks.is_empty()
+            || self.disc_type.as_ref().map(|d| d.supports_vcd10()).unwrap_or(false)
+    }
+
     /// Switches active disc playback mode (VCD 3.0 Interactive, VCD 2.0 Classic, VCD 1.0 Linear).
     pub fn switch_active_mode(&mut self, target_mode: ActiveDiscMode) -> Result<(), KernelError> {
         self.active_mode = target_mode;
@@ -830,7 +862,7 @@ impl VcdKernel {
                 let root = self.disc_root.clone();
                 self.open_disc(root)
             }
-            ActiveDiscMode::Vcd20Classic | ActiveDiscMode::Vcd10Linear => {
+            ActiveDiscMode::Vcd20Classic => {
                 if let Some(mut v) = self.active_video.take() {
                     v.stop();
                 }
@@ -838,6 +870,29 @@ impl VcdKernel {
                 self.vm.terminate();
                 self.current_page = None;
                 self.current_page_name.clear();
+                self.pbc_digit_buffer.clear();
+                for chunk in self.canvas.chunks_exact_mut(4) {
+                    chunk[0] = 0;
+                    chunk[1] = 0;
+                    chunk[2] = 0;
+                    chunk[3] = 255;
+                }
+                if let Err(_) = self.start_pbc() {
+                    if !self.tracks.is_empty() {
+                        self.play_track(0)?;
+                    }
+                }
+                Ok(())
+            }
+            ActiveDiscMode::Vcd10Linear => {
+                if let Some(mut v) = self.active_video.take() {
+                    v.stop();
+                }
+                self.audio.stop_all();
+                self.vm.terminate();
+                self.current_page = None;
+                self.current_page_name.clear();
+                self.pbc_digit_buffer.clear();
                 for chunk in self.canvas.chunks_exact_mut(4) {
                     chunk[0] = 0;
                     chunk[1] = 0;
@@ -886,7 +941,28 @@ impl VcdKernel {
                 }
                 Ok(())
             }
-            ActiveDiscMode::Vcd20Classic | ActiveDiscMode::Vcd10Linear => {
+            ActiveDiscMode::Vcd20Classic => {
+                if let Some(mut v) = self.active_video.take() {
+                    v.stop();
+                }
+                self.audio.stop_all();
+                self.vm.terminate();
+                self.current_page = None;
+                self.current_page_name.clear();
+                for chunk in self.canvas.chunks_exact_mut(4) {
+                    chunk[0] = 0;
+                    chunk[1] = 0;
+                    chunk[2] = 0;
+                    chunk[3] = 255;
+                }
+                if let Err(_) = self.restart_pbc() {
+                    if !self.tracks.is_empty() {
+                        self.play_track(0)?;
+                    }
+                }
+                Ok(())
+            }
+            ActiveDiscMode::Vcd10Linear => {
                 if let Some(mut v) = self.active_video.take() {
                     v.stop();
                 }
@@ -908,6 +984,281 @@ impl VcdKernel {
         }
     }
 
+    /// Initializes PBC interactive state machine from LOT.VCD and PSD.VCD.
+    pub fn init_pbc(&mut self) -> Result<(), String> {
+        let lot_path = crate::vcd::detector::find_path_ci(&self.disc_root, &["VCD", "LOT.VCD"])
+            .ok_or_else(|| "未找到 LOT.VCD 映射文件".to_string())?;
+        let psd_path = crate::vcd::detector::find_path_ci(&self.disc_root, &["VCD", "PSD.VCD"])
+            .ok_or_else(|| "未找到 PSD.VCD 控制文件".to_string())?;
+
+        let offset_mult = 8;
+        let lot = crate::vcd::LotTable::from_file(&lot_path, offset_mult)?;
+        let psd = crate::vcd::PsdTable::from_file(&psd_path, offset_mult)?;
+
+        self.pbc = Some(crate::vcd::PbcEngine::new(lot, psd));
+        self.pbc_digit_buffer.clear();
+        Ok(())
+    }
+
+    /// Starts PBC playback according to VCD 2.0 White Book rules.
+    pub fn start_pbc(&mut self) -> Result<(), String> {
+        if self.pbc.is_none() {
+            self.init_pbc()?;
+        }
+        let action = self
+            .pbc
+            .as_mut()
+            .and_then(|p| p.start())
+            .ok_or_else(|| "启动 PBC 状态机失败".to_string())?;
+        self.execute_pbc_action(action)
+    }
+
+    /// Restarts PBC playback from the beginning (LID 1).
+    pub fn restart_pbc(&mut self) -> Result<(), String> {
+        self.start_pbc()
+    }
+
+    /// User presses the dedicated "PBC" button.
+    /// Jumps directly to the primary/root selection menu or restarts PBC loop.
+    pub fn trigger_pbc_menu(&mut self) -> Result<(), String> {
+        if self.active_mode != ActiveDiscMode::Vcd20Classic {
+            return Err("仅在 VCD 2.0 模式下支持 PBC 菜单".to_string());
+        }
+        if self.pbc.is_none() {
+            self.init_pbc()?;
+        }
+        let action = self
+            .pbc
+            .as_mut()
+            .and_then(|p| p.press_pbc())
+            .ok_or_else(|| "未找到有效 PBC 菜单".to_string())?;
+        self.execute_pbc_action(action)
+    }
+
+    /// Executes an action emitted by the PBC state machine.
+    pub fn execute_pbc_action(&mut self, action: crate::vcd::PbcAction) -> Result<(), String> {
+        match action {
+            crate::vcd::PbcAction::PlayTrack { track_number, item_id, .. } => {
+                self.current_page = None;
+                self.current_page_name.clear();
+                let track_idx = self.tracks.iter().position(|t| {
+                    t.track_no == track_number
+                        || (item_id >= 2 && item_id <= 99 && t.index == (item_id - 1) as usize)
+                });
+                if let Some(idx) = track_idx {
+                    self.play_track(idx).map_err(|e| e.to_string())?;
+                    Ok(())
+                } else if !self.tracks.is_empty() {
+                    let fallback_idx = (track_number.saturating_sub(2) as usize).min(self.tracks.len() - 1);
+                    self.play_track(fallback_idx).map_err(|e| e.to_string())?;
+                    Ok(())
+                } else {
+                    Err(format!("未找到 PBC 轨道: {}", track_number))
+                }
+            }
+            crate::vcd::PbcAction::DisplayStillMenu { item_id, segment_index, .. } => {
+                if let Some(mut v) = self.active_video.take() {
+                    v.stop();
+                }
+                self.current_page = None;
+                self.current_page_name = format!("PBC 菜单 (ITEM{:04}.DAT)", segment_index);
+                if let Some(seg_path) = crate::vcd::resolve_segment_path(&self.disc_root, item_id) {
+                    let (w, h, rgba) = crate::vcd::decode_segment_frame(&seg_path)?;
+                    crate::vcd::blit_segment_to_canvas(w, h, &rgba, &mut self.canvas);
+                    Ok(())
+                } else {
+                    Err(format!("未找到段菜单文件: ITEM{:04}.DAT", segment_index))
+                }
+            }
+            crate::vcd::PbcAction::PlayMotionMenu { track_number, item_id, .. } => {
+                self.current_page = None;
+                let track_idx = self.tracks.iter().position(|t| {
+                    t.track_no == track_number
+                        || (item_id >= 2 && item_id <= 99 && t.index == (item_id - 1) as usize)
+                });
+                let res = if let Some(idx) = track_idx {
+                    self.play_track(idx).map_err(|e| e.to_string())
+                } else if !self.tracks.is_empty() {
+                    let fallback_idx = (track_number.saturating_sub(2) as usize).min(self.tracks.len() - 1);
+                    self.play_track(fallback_idx).map_err(|e| e.to_string())
+                } else {
+                    Err(format!("未找到 PBC 动态选单轨道: {}", track_number))
+                };
+                if res.is_ok() {
+                    self.current_page_name = format!("PBC 动态选单 ({})", track_number);
+                }
+                res.map(|_| ())
+            }
+            crate::vcd::PbcAction::End => {
+                let _ = self.stop_video_and_exit();
+                for chunk in self.canvas.chunks_exact_mut(4) {
+                    chunk[0] = 0;
+                    chunk[1] = 0;
+                    chunk[2] = 0;
+                    chunk[3] = 255;
+                }
+                self.current_page_name.clear();
+                Ok(())
+            }
+        }
+    }
+
+    /// Handles a numeric digit input in VCD 2.0 PBC mode.
+    pub fn handle_pbc_digit(&mut self, digit: u8) -> Result<(), String> {
+        let (max_sel, bsn) = if let Some(ref pbc) = self.pbc {
+            if let crate::vcd::PbcState::InSelection { ref desc, .. } = pbc.state {
+                let max = (desc.bsn as usize + desc.nos as usize).saturating_sub(1);
+                (Some(max), desc.bsn as usize)
+            } else {
+                (Some(self.tracks.len()), 1)
+            }
+        } else {
+            (Some(self.tracks.len()), 1)
+        };
+
+        let mut next_action = None;
+        if let Some(max) = max_sel {
+            if max == 0 {
+                return Ok(());
+            }
+            if max <= 9 {
+                let sel_num = digit as usize;
+                if let Some(ref mut pbc) = self.pbc {
+                    next_action = pbc.select_number(sel_num)?;
+                }
+            } else {
+                self.pbc_digit_buffer.push(digit);
+                self.pbc_digit_timestamp = Some(Instant::now());
+                let val = self.pbc_digit_buffer.iter().fold(0usize, |acc, &d| acc * 10 + d as usize);
+                if val * 10 > max || self.pbc_digit_buffer.len() >= 2 || (val >= bsn && val > max / 10 && val <= max) {
+                    self.pbc_digit_buffer.clear();
+                    self.pbc_digit_timestamp = None;
+                    if let Some(ref mut pbc) = self.pbc {
+                        next_action = pbc.select_number(val)?;
+                    }
+                }
+            }
+        } else if let Some(ref mut pbc) = self.pbc {
+            let sel_num = digit as usize;
+            next_action = pbc.select_number(sel_num)?;
+        }
+
+        if let Some(action) = next_action {
+            return self.execute_pbc_action(action);
+        }
+        Ok(())
+    }
+
+    /// Handles default / confirm / Enter input in VCD 2.0 PBC mode.
+    pub fn handle_pbc_enter(&mut self) -> Result<(), String> {
+        let mut next_action = None;
+        if !self.pbc_digit_buffer.is_empty() {
+            let val = self.pbc_digit_buffer.iter().fold(0usize, |acc, &d| acc * 10 + d as usize);
+            self.pbc_digit_buffer.clear();
+            self.pbc_digit_timestamp = None;
+            if let Some(ref mut pbc) = self.pbc {
+                next_action = pbc.select_number(val)?;
+            }
+        } else if let Some(ref mut pbc) = self.pbc {
+            next_action = pbc.press_default();
+        }
+
+        if let Some(action) = next_action {
+            return self.execute_pbc_action(action);
+        }
+        Ok(())
+    }
+
+    /// Checks if the numeric input buffer has timed out (e.g. 2.0 seconds without Enter).
+    /// If timed out, automatically confirms the buffered digits.
+    pub fn check_pbc_digit_timeout(&mut self) -> Result<bool, String> {
+        if self.pbc_digit_buffer.is_empty() {
+            self.pbc_digit_timestamp = None;
+            return Ok(false);
+        }
+
+        if let Some(ts) = self.pbc_digit_timestamp {
+            if ts.elapsed() >= std::time::Duration::from_millis(2000) {
+                if self.active_mode == ActiveDiscMode::Vcd20Classic {
+                    self.handle_pbc_enter()?;
+                } else if self.active_mode == ActiveDiscMode::Vcd10Linear {
+                    self.handle_linear_enter()?;
+                }
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Handles a numeric digit input in VCD 1.0 linear video mode.
+    pub fn handle_linear_digit(&mut self, digit: u8) -> Result<(), String> {
+        let max = self.tracks.len();
+        if max == 0 {
+            return Ok(());
+        }
+        if max <= 9 {
+            let sel_num = digit as usize;
+            if sel_num >= 1 && sel_num <= max {
+                let _ = self.play_track(sel_num - 1);
+            }
+        } else {
+            self.pbc_digit_buffer.push(digit);
+            self.pbc_digit_timestamp = Some(Instant::now());
+            let val = self.pbc_digit_buffer.iter().fold(0usize, |acc, &d| acc * 10 + d as usize);
+            if val * 10 > max || self.pbc_digit_buffer.len() >= 2 || (val >= 1 && val > max / 10 && val <= max) {
+                self.pbc_digit_buffer.clear();
+                self.pbc_digit_timestamp = None;
+                if val >= 1 && val <= max {
+                    let _ = self.play_track(val - 1);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Handles Enter / confirm input in VCD 1.0 linear video mode.
+    pub fn handle_linear_enter(&mut self) -> Result<(), String> {
+        if !self.pbc_digit_buffer.is_empty() {
+            let val = self.pbc_digit_buffer.iter().fold(0usize, |acc, &d| acc * 10 + d as usize);
+            self.pbc_digit_buffer.clear();
+            self.pbc_digit_timestamp = None;
+            let max = self.tracks.len();
+            if val >= 1 && val <= max {
+                let _ = self.play_track(val - 1);
+            }
+        }
+        Ok(())
+    }
+
+    /// Handles return / back / Escape input in VCD 2.0 PBC mode.
+    pub fn handle_pbc_return(&mut self) -> Result<(), String> {
+        self.pbc_digit_buffer.clear();
+        self.pbc_digit_timestamp = None;
+        let action = self.pbc.as_mut().and_then(|pbc| pbc.press_return());
+        if let Some(act) = action {
+            return self.execute_pbc_action(act);
+        }
+        Ok(())
+    }
+
+    /// Handles previous track / previous menu in VCD 2.0 PBC mode.
+    pub fn handle_pbc_prev(&mut self) -> Result<(), String> {
+        let action = self.pbc.as_mut().and_then(|pbc| pbc.press_prev());
+        if let Some(act) = action {
+            return self.execute_pbc_action(act);
+        }
+        Ok(())
+    }
+
+    /// Handles next track / next menu in VCD 2.0 PBC mode.
+    pub fn handle_pbc_next(&mut self) -> Result<(), String> {
+        let action = self.pbc.as_mut().and_then(|pbc| pbc.press_next());
+        if let Some(act) = action {
+            return self.execute_pbc_action(act);
+        }
+        Ok(())
+    }
+
     /// Plays the track at the specified index in `self.tracks`.
     pub fn play_track(&mut self, track_idx: usize) -> Result<bool, KernelError> {
         if track_idx >= self.tracks.len() {
@@ -916,6 +1267,8 @@ impl VcdKernel {
         let track = &self.tracks[track_idx];
         let fname = track.file_name.clone();
         self.current_track_index = Some(track_idx);
+        self.current_page = None;
+        self.current_page_name.clear();
         self.start_video(&fname, 0, 0, None)
     }
 
@@ -962,7 +1315,14 @@ impl VcdKernel {
         if let Some(ref mut player) = self.active_video {
             let updated = player.update();
             if player.state == VideoPlayState::Ended {
-                if self.active_mode != ActiveDiscMode::Vcd30Interactive {
+                if self.active_mode == ActiveDiscMode::Vcd20Classic && self.pbc.is_some() {
+                    let _ = self.stop_video_and_exit();
+                    if let Some(ref mut pbc) = self.pbc {
+                        if let Some(action) = pbc.on_item_finished() {
+                            let _ = self.execute_pbc_action(action);
+                        }
+                    }
+                } else if self.active_mode != ActiveDiscMode::Vcd30Interactive {
                     match self.playback_mode {
                         PlaybackMode::SingleRepeat => {
                             if let Some(idx) = self.current_track_index {
@@ -1144,6 +1504,50 @@ impl VcdKernel {
     }
 
     pub fn inject_remote_key(&mut self, key_code: i32) -> VmState {
+        if self.active_mode == ActiveDiscMode::Vcd20Classic && self.pbc.is_some() {
+            match key_code {
+                0..=9 => {
+                    let _ = self.handle_pbc_digit(key_code as u8);
+                }
+                31 => {
+                    let _ = self.handle_pbc_enter();
+                }
+                32 => {
+                    let _ = self.handle_pbc_return();
+                }
+                34 | 36 => {
+                    let _ = self.handle_pbc_prev();
+                }
+                35 | 37 => {
+                    let _ = self.handle_pbc_next();
+                }
+                _ => {}
+            }
+            return self.vm.state.clone();
+        }
+
+        if self.active_mode == ActiveDiscMode::Vcd10Linear {
+            match key_code {
+                0..=9 => {
+                    let _ = self.handle_linear_digit(key_code as u8);
+                }
+                31 => {
+                    let _ = self.handle_linear_enter();
+                }
+                32 => {
+                    let _ = self.stop_video_and_exit();
+                }
+                34 | 36 => {
+                    let _ = self.play_prev_track();
+                }
+                35 | 37 => {
+                    let _ = self.play_next_track(true);
+                }
+                _ => {}
+            }
+            return self.vm.state.clone();
+        }
+
         if self.is_video_active() {
             if key_code == 32 {
                 let _ = self.stop_video_and_exit();

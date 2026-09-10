@@ -82,7 +82,39 @@ pub fn extract_mpeg_ps(data: &[u8]) -> Result<Vec<u8>, String> {
         }
     }
 
+    // In VCD 2.0 / White Book, segment still picture files (/SEGMENT/ITEMxxxx.DAT)
+    // use stream ID 0xE1 (normal resolution) or 0xE2 (high resolution) instead of 0xE0.
+    // If no stream 0xE0 is present, remap 0xE1 to 0xE0 so standard MPEG decoders can decode it.
+    remap_segment_video_streams(&mut ps_stream);
+
     Ok(ps_stream)
+}
+
+/// Remaps segment still picture video stream IDs (0xE1 -> 0xE0) when stream 0xE0 is absent.
+pub fn remap_segment_video_streams(data: &mut [u8]) {
+    if data.len() < 4 {
+        return;
+    }
+    let mut has_e0 = false;
+    let mut has_e1 = false;
+    for i in 0..data.len().saturating_sub(3) {
+        if data[i] == 0x00 && data[i + 1] == 0x00 && data[i + 2] == 0x01 {
+            if data[i + 3] == 0xE0 {
+                has_e0 = true;
+                break;
+            } else if data[i + 3] == 0xE1 {
+                has_e1 = true;
+            }
+        }
+    }
+
+    if !has_e0 && has_e1 {
+        for i in 0..data.len().saturating_sub(3) {
+            if data[i] == 0x00 && data[i + 1] == 0x00 && data[i + 2] == 0x01 && data[i + 3] == 0xE1 {
+                data[i + 3] = 0xE0;
+            }
+        }
+    }
 }
 
 /// Finds the index of the first valid MPEG-1 start code in the stream.

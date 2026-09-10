@@ -39,11 +39,19 @@ The original software stack depended on Windows-era multimedia components and pr
 
 ### Disc & Format Support
 
-* VCD 3.0 disc/directory detection
-* `<COMPHTML>` / `.CHM` parsing
-* `.YBM` image decoding
-* `AUTORUN.CLS` analysis
-* VCD navigation and resource loading
+#### VCD 3.0 Support
+* **Disc Structure & Startup Configuration**: Automatic detection of VCD 3.0 compliant disc or folder layouts, parsing `AUTORUN.CLS` and `ENREACH.CLS` configurations to accurately pinpoint the startup homepage and intro video settings
+* **Compiled Interactive Page Parsing**: Deep binary parsing of `<COMPHTML>` / `.CHM` page files, supporting page layout composition, polygonal/rectangular clickable hotspots, page navigation routing tables, and composite overlay layer synthesis
+* **Palette Image Decoding & Compositing**: High-performance decoding of `<YUVBMP>` / `.YBM` 8-bit indexed palette images to RGBA canvas textures, with high-precision chroma subsampling and Alpha channel transparency blending
+* **VCDSCRIPT Interpreter & Virtual Machine**: Built-in AST parser and coroutine virtual machine (VM) supporting arithmetic expressions, conditional branches (`IF...THEN...ELSE`), subroutines (`GOSUB`), pseudo-random generation (`CALL RAND`), key waiting (`CALL IRKEY`), and animation timing delays
+* **Multimedia Audio/Video & Karaoke Engine**: Seamless playback scheduling for MPEG-1 video streams (`.DAT`), looping background music (`BGSOUND`), instant button sound effects (`.WAV`), and full support for the interactive Karaoke playlist command set
+
+#### VCD 2.0 Support
+* **White Book PBC (Playback Control) State Machine**: Complete parsing and execution of `LOT.VCD` (Location Table) and `PSD.VCD` (Play Sequence Descriptor), supporting `PlayList`, `SelectionList`, and `EndList` interactive workflows
+* **Still & Motion Menus**: Support for `/SEGMENT/ITEMxxxx.DAT` high-resolution still picture menu frame decoding and standard MPEG-1 motion video menu playback
+* **Multi-function Remote & Keypad Navigation**: Multi-digit track/selection buffering with 2.0s timeout auto-confirmation, `Enter` confirmation, and precise physical track seeking; dedicated "PBC" button to return to root menus at any time
+* **Multi-Mode Adaptive Switching**: Distinguishes between VCD 2.0 Classic PBC interaction and VCD 1.0 Linear video playback, allowing seamless switching between modes
+* **Track & Timecode Indexing**: Accurate parsing of `ENTRIES.VCD` entry points, with track list timecodes formatted clearly as `MM:SS.FF`
 
 ### Interactive Runtime
 

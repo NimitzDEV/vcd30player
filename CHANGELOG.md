@@ -7,6 +7,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+- **VCD 2.0 Classic PBC (Playback Control) State Machine**:
+  - Full binary parser for `VCD/LOT.VCD` (Location Table) and `VCD/PSD.VCD` (Play Sequence Descriptor), supporting `PlayList`, `SelectionList`, and `EndList` structures according to the White Book standard.
+  - Event-driven PBC state machine supporting multi-level menus, track chains, wait delays, and automatic timeout transitions.
+  - High-resolution still picture menu support (`/SEGMENT/ITEMxxxx.DAT` demuxing, decoding, and canvas rendering).
+  - MPEG-1 motion video menu support with smooth interactive playback.
+  - Dedicated "PBC" root menu toggle button in the bottom control bar to jump back to primary selection menus at any time.
+- **Multi-Mode Adaptive Disc Architecture**:
+  - Automatic detection and seamless switching between VCD 3.0 Interactive mode, VCD 2.0 Classic PBC mode, and VCD 1.0 Linear video playback.
+  - Independent lifecycle management and clean state rebuild when switching modes.
+- **Multi-Digit Numeric Keypad Buffering**:
+  - Smart numeric key buffering for remote control and keyboard input (buffers single digits if tracks/selections > 9, waits for `Enter`, second digit, or 2.0s auto-confirm timeout).
+  - Real-time status bar feedback during digit entry (e.g. `输入曲目: 1 (按 Enter 确认或等待)`).
+  - Numeric track jumping support in VCD 1.0 Linear mode.
+
+### Fixed
+- **Track Playback Numeric Keypad Intro Video Jump**:
+  - Resolved an issue in VCD 2.0 mode where entering a track number (such as `1`) during playback incorrectly jumped to the opening intro video (LID 1) via LOT lookup instead of the actual physical track. Now correctly resolves matching PSD descriptors and preserves PBC return semantics.
+- **Track List Timecode Separator**:
+  - Formatted track list timecode separator between seconds and frames/milliseconds as a dot `.` instead of a colon `:` (e.g. `[05:02.70]`), preventing confusion with HH:MM:SS format.
+- **PBC Menu State Lingering**:
+  - Cleared lingering PBC menu titles from the window title bar and status bar upon navigating into track video playback.
+- **Home Button Activation Guard**:
+  - Disabled home button click activation when running outside of VCD 3.0 Interactive mode.
+- **Drawer Close Button Glyph**:
+  - Replaced drawer close glyph with high-compatibility symbols to prevent rectangle tofu glyph rendering on non-standard font systems.
+
+### Changed
+- **Side Panel Expansion Window Sizing**:
+  - Automatically expands window width when opening the side panel drawer and restores width when closing, preventing canvas aspect ratio compression.
+- **Bottom Control Bar Layout Refinements**:
+  - Moved playback mode switcher after the audio channel selector.
+  - Compacted audio channel, playback order, and about buttons to clean icon controls with refined margins.
+  - Standardized the reset button behavior to restart the current active mode from the beginning.
+
 ## [0.1.6] - 2026-09-10
 
 ### Added

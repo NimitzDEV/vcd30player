@@ -1,4 +1,5 @@
-//! Audio manager implementation using rodio with graceful fallback for headless/silent systems.
+pub mod channel;
+pub use channel::AudioChannelMode;
 
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
 use std::collections::HashMap;

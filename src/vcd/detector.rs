@@ -273,19 +273,21 @@ mod tests {
 
     #[test]
     fn test_detect_live_disc_if_available() {
-        let live_path = Path::new("I:\\");
-        if live_path.exists() {
-            let disc_type = detect_disc(live_path);
-            match disc_type {
-                VcdDiscType::Vcd30Interactive {
-                    has_vcd20_layer,
-                    entry_count,
-                    ..
-                } => {
-                    assert!(has_vcd20_layer);
-                    assert_eq!(entry_count, 27);
+        if let Some(val) = std::env::var_os("VCD_TEST_DISC") {
+            let live_path = PathBuf::from(val);
+            if live_path.exists() {
+                let disc_type = detect_disc(&live_path);
+                match disc_type {
+                    VcdDiscType::Vcd30Interactive {
+                        has_vcd20_layer,
+                        entry_count,
+                        ..
+                    } => {
+                        assert!(has_vcd20_layer);
+                        assert_eq!(entry_count, 27);
+                    }
+                    other => panic!("Expected test disc to be Vcd30Interactive, got {:?}", other),
                 }
-                other => panic!("Expected live disc I:\\ to be Vcd30Interactive, got {:?}", other),
             }
         }
     }

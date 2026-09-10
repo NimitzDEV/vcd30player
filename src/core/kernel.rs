@@ -6,7 +6,7 @@ use crate::assets::ybm::YbmImage;
 use crate::audio::AudioManager;
 use crate::core::script_ast::ScriptProgram;
 use crate::core::script_vm::{UnrecognizedInstruction, VcdScriptVm, VmHost, VmState};
-use crate::video::VideoPlayer;
+use crate::video::{VideoPlayState, VideoPlayer};
 use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -295,6 +295,66 @@ impl<'a> VmHost for KernelHost<'a> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PlaybackMode {
+    #[default]
+    Sequential,
+    ListRepeat,
+    SingleRepeat,
+}
+
+impl PlaybackMode {
+    pub fn cycle(&self) -> Self {
+        match self {
+            PlaybackMode::Sequential => PlaybackMode::ListRepeat,
+            PlaybackMode::ListRepeat => PlaybackMode::SingleRepeat,
+            PlaybackMode::SingleRepeat => PlaybackMode::Sequential,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            PlaybackMode::Sequential => "➡ 顺序播放",
+            PlaybackMode::ListRepeat => "🔁 列表循环",
+            PlaybackMode::SingleRepeat => "🔂 单曲循环",
+        }
+    }
+
+    pub fn icon(&self) -> &'static str {
+        match self {
+            PlaybackMode::Sequential => "➡",
+            PlaybackMode::ListRepeat => "🔁",
+            PlaybackMode::SingleRepeat => "🔂",
+        }
+    }
+
+    pub fn description(&self) -> &'static str {
+        match self {
+            PlaybackMode::Sequential => "顺序播放",
+            PlaybackMode::ListRepeat => "列表循环",
+            PlaybackMode::SingleRepeat => "单曲循环",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ActiveDiscMode {
+    #[default]
+    Vcd30Interactive,
+    Vcd20Classic,
+    Vcd10Linear,
+}
+
+impl ActiveDiscMode {
+    pub fn label(&self) -> &'static str {
+        match self {
+            ActiveDiscMode::Vcd30Interactive => "VCD 3.0 互动模式",
+            ActiveDiscMode::Vcd20Classic => "VCD 2.0 经典模式",
+            ActiveDiscMode::Vcd10Linear => "VCD 1.0 纯视频模式",
+        }
+    }
+}
+
 pub struct VcdKernel {
     pub disc_root: PathBuf,
     pub current_page_name: String,
@@ -314,6 +374,11 @@ pub struct VcdKernel {
     pub active_video: Option<VideoPlayer>,
     pub karaoke_playlist: KaraokePlaylist,
     pub disc_type: Option<crate::vcd::VcdDiscType>,
+    pub channel_mode: crate::audio::AudioChannelMode,
+    pub playback_mode: PlaybackMode,
+    pub active_mode: ActiveDiscMode,
+    pub tracks: Vec<crate::vcd::DiscTrackInfo>,
+    pub current_track_index: Option<usize>,
 }
 
 impl VcdKernel {
@@ -342,6 +407,11 @@ impl VcdKernel {
             start_time: Instant::now(),
             active_video: None,
             karaoke_playlist: KaraokePlaylist::new(),
+            channel_mode: crate::audio::AudioChannelMode::Stereo,
+            playback_mode: PlaybackMode::Sequential,
+            active_mode: ActiveDiscMode::Vcd30Interactive,
+            tracks: Vec::new(),
+            current_track_index: None,
         }
     }
 
@@ -541,33 +611,56 @@ impl VcdKernel {
         self.karaoke_playlist.clear();
 
         let disc_type = crate::vcd::detect_disc(&self.disc_root);
-        self.disc_type = Some(disc_type);
+        self.disc_type = Some(disc_type.clone());
+        self.tracks = crate::vcd::scan_disc_tracks(&self.disc_root);
+        self.current_track_index = None;
 
-        let cls_path = self.find_file("AUTORUN.CLS");
-        let mut initial_page = "HOMEPAGE.CHM".to_string();
-        let mut opening_video = None;
-
-        if let Some(cls_file) = cls_path {
-            if let Ok(bytes) = std::fs::read(&cls_file) {
-                if let Ok(config) = AutoRunConfig::parse(&bytes) {
-                    initial_page = config.homepage_chm.clone();
-                    if let Some(ref mpeg) = config.opening_mpeg {
-                        if !mpeg.is_empty() {
-                            opening_video = Some(mpeg.clone());
-                        }
-                    }
-                    self.autorun_config = Some(config);
-                }
+        match &disc_type {
+            crate::vcd::VcdDiscType::Vcd30Interactive { .. } => {
+                self.active_mode = ActiveDiscMode::Vcd30Interactive;
+            }
+            crate::vcd::VcdDiscType::Vcd20WithPbc { .. } => {
+                self.active_mode = ActiveDiscMode::Vcd20Classic;
+            }
+            _ => {
+                self.active_mode = ActiveDiscMode::Vcd10Linear;
             }
         }
 
-        // Always load initial page first so page state and background are fully ready
-        self.load_page(&initial_page, false)?;
+        if self.active_mode == ActiveDiscMode::Vcd30Interactive {
+            let cls_path = self.find_file("AUTORUN.CLS");
+            let mut initial_page = "HOMEPAGE.CHM".to_string();
+            let mut opening_video = None;
 
-        // If an opening video is configured and exists, start playing it
-        if let Some(ref mpeg_name) = opening_video {
-            if self.find_file(mpeg_name).is_some() {
-                let _ = self.start_video(mpeg_name, 0, 0, Some(initial_page.clone()));
+            if let Some(cls_file) = cls_path {
+                if let Ok(bytes) = std::fs::read(&cls_file) {
+                    if let Ok(config) = AutoRunConfig::parse(&bytes) {
+                        initial_page = config.homepage_chm.clone();
+                        if let Some(ref mpeg) = config.opening_mpeg {
+                            if !mpeg.is_empty() {
+                                opening_video = Some(mpeg.clone());
+                            }
+                        }
+                        self.autorun_config = Some(config);
+                    }
+                }
+            }
+
+            // Always load initial page first so page state and background are fully ready
+            self.load_page(&initial_page, false)?;
+
+            // If an opening video is configured and exists, start playing it
+            if let Some(ref mpeg_name) = opening_video {
+                if self.find_file(mpeg_name).is_some() {
+                    let _ = self.start_video(mpeg_name, 0, 0, Some(initial_page.clone()));
+                }
+            }
+        } else {
+            // VCD 2.0 or VCD 1.0 mode: start playing first track if available
+            self.current_page = None;
+            self.current_page_name.clear();
+            if !self.tracks.is_empty() {
+                self.play_track(0)?;
             }
         }
 
@@ -685,7 +778,7 @@ impl VcdKernel {
 
         self.audio.stop_all();
         let sink = self.audio.create_video_sink();
-        let player = VideoPlayer::new(
+        let mut player = VideoPlayer::new(
             &bytes,
             filename.to_string(),
             sink,
@@ -694,6 +787,7 @@ impl VcdKernel {
             exit_target,
         )
         .map_err(|e| KernelError::ChmParseError(format!("Video init error: {}", e)))?;
+        player.set_channel_mode(self.channel_mode);
 
         self.active_video = Some(player);
         Ok(true)
@@ -728,11 +822,163 @@ impl VcdKernel {
         }
     }
 
+    /// Switches active disc playback mode (VCD 3.0 Interactive, VCD 2.0 Classic, VCD 1.0 Linear).
+    pub fn switch_active_mode(&mut self, target_mode: ActiveDiscMode) -> Result<(), KernelError> {
+        self.active_mode = target_mode;
+        match target_mode {
+            ActiveDiscMode::Vcd30Interactive => {
+                let root = self.disc_root.clone();
+                self.open_disc(root)
+            }
+            ActiveDiscMode::Vcd20Classic | ActiveDiscMode::Vcd10Linear => {
+                if let Some(mut v) = self.active_video.take() {
+                    v.stop();
+                }
+                self.audio.stop_all();
+                self.vm.terminate();
+                self.current_page = None;
+                self.current_page_name.clear();
+                for chunk in self.canvas.chunks_exact_mut(4) {
+                    chunk[0] = 0;
+                    chunk[1] = 0;
+                    chunk[2] = 0;
+                    chunk[3] = 255;
+                }
+                if !self.tracks.is_empty() {
+                    self.play_track(0)?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// Restarts playback from the beginning in the current active mode.
+    /// Mode switching is never performed here; it strictly preserves `self.active_mode`.
+    pub fn restart_current_mode(&mut self) -> Result<(), KernelError> {
+        match self.active_mode {
+            ActiveDiscMode::Vcd30Interactive => {
+                if let Some(mut v) = self.active_video.take() {
+                    v.stop();
+                }
+                self.audio.stop_all();
+                self.vm.terminate();
+                self.history_stack.clear();
+                self.forward_stack.clear();
+                self.karaoke_playlist.clear();
+                self.active_alert = None;
+
+                let initial_page = self
+                    .autorun_config
+                    .as_ref()
+                    .map(|c| c.homepage_chm.clone())
+                    .unwrap_or_else(|| "HOMEPAGE.CHM".to_string());
+                let opening_video = self
+                    .autorun_config
+                    .as_ref()
+                    .and_then(|c| c.opening_mpeg.clone());
+
+                self.load_page(&initial_page, false)?;
+
+                if let Some(ref mpeg_name) = opening_video {
+                    if self.find_file(mpeg_name).is_some() {
+                        let _ = self.start_video(mpeg_name, 0, 0, Some(initial_page));
+                    }
+                }
+                Ok(())
+            }
+            ActiveDiscMode::Vcd20Classic | ActiveDiscMode::Vcd10Linear => {
+                if let Some(mut v) = self.active_video.take() {
+                    v.stop();
+                }
+                self.audio.stop_all();
+                self.vm.terminate();
+                self.current_page = None;
+                self.current_page_name.clear();
+                for chunk in self.canvas.chunks_exact_mut(4) {
+                    chunk[0] = 0;
+                    chunk[1] = 0;
+                    chunk[2] = 0;
+                    chunk[3] = 255;
+                }
+                if !self.tracks.is_empty() {
+                    self.play_track(0)?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// Plays the track at the specified index in `self.tracks`.
+    pub fn play_track(&mut self, track_idx: usize) -> Result<bool, KernelError> {
+        if track_idx >= self.tracks.len() {
+            return Ok(false);
+        }
+        let track = &self.tracks[track_idx];
+        let fname = track.file_name.clone();
+        self.current_track_index = Some(track_idx);
+        self.start_video(&fname, 0, 0, None)
+    }
+
+    /// Navigates to the previous track (or restarts current if > 3 seconds in).
+    pub fn play_prev_track(&mut self) -> Result<bool, KernelError> {
+        if self.tracks.is_empty() {
+            return Ok(false);
+        }
+        let cur_idx = self.current_track_index.unwrap_or(0);
+        if let Some(ref mut player) = self.active_video {
+            if player.current_time() > 3.0 {
+                player.seek(0.0);
+                return Ok(true);
+            }
+        }
+        let new_idx = if cur_idx > 0 {
+            cur_idx - 1
+        } else {
+            match self.playback_mode {
+                PlaybackMode::ListRepeat => self.tracks.len().saturating_sub(1),
+                _ => 0,
+            }
+        };
+        self.play_track(new_idx)
+    }
+
+    /// Navigates to the next track.
+    pub fn play_next_track(&mut self, allow_wrap: bool) -> Result<bool, KernelError> {
+        if self.tracks.is_empty() {
+            return Ok(false);
+        }
+        let cur_idx = self.current_track_index.unwrap_or(0);
+        if cur_idx + 1 < self.tracks.len() {
+            self.play_track(cur_idx + 1)
+        } else if allow_wrap || self.playback_mode == PlaybackMode::ListRepeat {
+            self.play_track(0)
+        } else {
+            let _ = self.stop_video_and_exit();
+            Ok(false)
+        }
+    }
+
     pub fn update_video(&mut self) -> bool {
         if let Some(ref mut player) = self.active_video {
             let updated = player.update();
-            if player.is_ended() {
-                let _ = self.stop_video_and_exit();
+            if player.state == VideoPlayState::Ended {
+                if self.active_mode != ActiveDiscMode::Vcd30Interactive {
+                    match self.playback_mode {
+                        PlaybackMode::SingleRepeat => {
+                            if let Some(idx) = self.current_track_index {
+                                let _ = self.play_track(idx);
+                            }
+                        }
+                        PlaybackMode::ListRepeat => {
+                            let _ = self.play_next_track(true);
+                        }
+                        PlaybackMode::Sequential => {
+                            let _ = self.play_next_track(false);
+                        }
+                    }
+                } else {
+                    let _ = self.stop_video_and_exit();
+                }
                 false
             } else {
                 updated
@@ -976,6 +1222,9 @@ impl VcdKernel {
     }
 
     pub fn go_back(&mut self) -> Result<bool, KernelError> {
+        if self.active_mode != ActiveDiscMode::Vcd30Interactive {
+            return Ok(false);
+        }
         if self.overlay_doc.is_some() {
             self.dismiss_overlay();
             return Ok(true);
@@ -990,6 +1239,9 @@ impl VcdKernel {
     }
 
     pub fn go_forward(&mut self) -> Result<bool, KernelError> {
+        if self.active_mode != ActiveDiscMode::Vcd30Interactive {
+            return Ok(false);
+        }
         if let Some(next) = self.forward_stack.pop() {
             self.history_stack.push(self.current_page_name.clone());
             self.load_page(&next, false)?;
@@ -1000,6 +1252,9 @@ impl VcdKernel {
     }
 
     pub fn go_home(&mut self) -> Result<(), KernelError> {
+        if self.active_mode != ActiveDiscMode::Vcd30Interactive {
+            return Ok(());
+        }
         let home_target = if self.find_file("HOME.CHM").is_some() {
             "HOME.CHM"
         } else {
@@ -1009,6 +1264,9 @@ impl VcdKernel {
     }
 
     pub fn go_back_or_home(&mut self) -> Result<bool, KernelError> {
+        if self.active_mode != ActiveDiscMode::Vcd30Interactive {
+            return Ok(false);
+        }
         if self.go_back()? {
             Ok(true)
         } else {

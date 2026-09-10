@@ -6,6 +6,13 @@ use eframe::egui::{
 };
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DrawerTab {
+    #[default]
+    Remote,
+    Tracks,
+}
+
 pub struct VcdPlayerApp {
     pub kernel: VcdKernel,
     pub texture: Option<egui::TextureHandle>,
@@ -14,6 +21,7 @@ pub struct VcdPlayerApp {
     pub show_metadata: bool,
     pub show_remote: bool,
     pub show_about: bool,
+    pub drawer_tab: DrawerTab,
     pub hovered_hotspot: Option<String>,
     pub status_message: String,
     pub status_timestamp: Option<std::time::Instant>,
@@ -68,6 +76,38 @@ fn setup_custom_fonts(ctx: &egui::Context) {
 /// Transient status message linger duration (5 seconds).
 pub const STATUS_MESSAGE_DURATION: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// Renders a vector-drawn close button for the side panel header (immune to font missing glyph issues).
+fn close_panel_button(ui: &mut egui::Ui) -> egui::Response {
+    let size = Vec2::new(16.0, 16.0);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+    if ui.is_rect_visible(rect) {
+        let is_hovered = response.hovered();
+        let is_pressed = response.is_pointer_button_down_on();
+        if is_pressed {
+            ui.painter().rect_filled(rect, 2.0, Color32::from_rgb(200, 30, 45));
+        } else if is_hovered {
+            ui.painter().rect_filled(rect, 2.0, Color32::from_rgba_unmultiplied(255, 255, 255, 30));
+        }
+        let fg = if is_hovered {
+            Color32::WHITE
+        } else {
+            Color32::from_rgb(160, 160, 160)
+        };
+        let stroke = Stroke::new(1.3, fg);
+        let center = rect.center();
+        let d = 3.2;
+        ui.painter().line_segment(
+            [center + Vec2::new(-d, -d), center + Vec2::new(d, d)],
+            stroke,
+        );
+        ui.painter().line_segment(
+            [center + Vec2::new(-d, d), center + Vec2::new(d, -d)],
+            stroke,
+        );
+    }
+    response
+}
+
 impl VcdPlayerApp {
     pub fn new(cc: &eframe::CreationContext<'_>, initial_disc: Option<PathBuf>) -> Self {
         setup_custom_fonts(&cc.egui_ctx);
@@ -100,6 +140,7 @@ impl VcdPlayerApp {
             show_metadata: false,
             show_remote: false,
             show_about: false,
+            drawer_tab: DrawerTab::Remote,
             hovered_hotspot: None,
             status_message: status,
             status_timestamp: if has_initial_disc {
@@ -121,6 +162,7 @@ impl VcdPlayerApp {
             show_metadata: false,
             show_remote: false,
             show_about: false,
+            drawer_tab: DrawerTab::Remote,
             hovered_hotspot: None,
             status_message: String::new(),
             status_timestamp: None,
@@ -205,6 +247,9 @@ impl VcdPlayerApp {
         self.kernel.sprite_cache.clear();
         self.kernel.karaoke_playlist.clear();
         self.kernel.disc_type = None;
+        self.kernel.tracks.clear();
+        self.kernel.current_track_index = None;
+        self.kernel.active_mode = crate::core::kernel::ActiveDiscMode::Vcd30Interactive;
         self.kernel.vm.terminate();
         self.texture = None;
         self.texture_dirty = true;
@@ -212,20 +257,36 @@ impl VcdPlayerApp {
         self.set_status("光盘已弹出，请加载光盘");
     }
 
-    /// Resets the current disc or page to its freshly loaded state and restarts playback.
+    /// Toggles the side panel, dynamically adjusting the window width so the central canvas is not compressed.
+    pub fn toggle_side_panel(&mut self, ctx: &egui::Context, open: bool) {
+        if self.show_remote == open {
+            return;
+        }
+        self.show_remote = open;
+        let panel_width = 230.0;
+        let is_maximized = ctx.input(|i| i.viewport().maximized).unwrap_or(false);
+        if !is_maximized {
+            let cur_size = ctx.viewport_rect().size();
+            let new_w = if open {
+                cur_size.x + panel_width
+            } else {
+                (cur_size.x - panel_width).max(500.0)
+            };
+            ctx.send_viewport_cmd(egui::viewport::ViewportCommand::InnerSize(Vec2::new(
+                new_w, cur_size.y,
+            )));
+        }
+    }
+
+    /// Resets playback from the beginning in the current active mode.
+    /// Mode switching is not performed here and must be user-triggered.
     pub fn reset_disc(&mut self, ctx: &egui::Context) {
         if !self.kernel.disc_root.as_os_str().is_empty() {
-            let root = self.kernel.disc_root.clone();
-            if let Err(e) = self.kernel.open_disc(root.clone()) {
+            if let Err(e) = self.kernel.restart_current_mode() {
                 self.set_status(format!("重置失败: {}", e));
             } else {
-                let disc_desc = self
-                    .kernel
-                    .disc_type
-                    .as_ref()
-                    .map(|t| t.to_string())
-                    .unwrap_or_else(|| "光盘".to_string());
-                self.set_status(format!("已重置光盘: {}", disc_desc));
+                let mode_desc = self.kernel.active_mode.label();
+                self.set_status(format!("已重新从头开始播放 ({})", mode_desc));
                 self.texture = None;
                 self.texture_dirty = true;
                 ctx.request_repaint();
@@ -431,17 +492,98 @@ impl VcdPlayerApp {
 
                 ui.add(egui::Separator::default().spacing(0.0));
 
-                if ui
-                    .add_enabled(is_loaded, egui::Button::new("↺ 重置"))
-                    .clicked()
-                {
-                    self.reset_disc(&ctx);
-                }
+                // 重置按钮 Split Button (↺ 重置 ▼)
+                ui.scope(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+
+                    let left_cr = egui::CornerRadius { nw: 4, ne: 0, sw: 4, se: 0 };
+                    if ui
+                        .add_enabled(is_loaded, egui::Button::new("↺ 重置").corner_radius(left_cr))
+                        .on_hover_text("从头开始重新播放当前模式")
+                        .clicked()
+                    {
+                        self.reset_disc(&ctx);
+                    }
+
+                    let right_cr = egui::CornerRadius { nw: 0, ne: 4, sw: 0, se: 4 };
+                    ui.visuals_mut().widgets.inactive.corner_radius = right_cr;
+                    ui.visuals_mut().widgets.hovered.corner_radius = right_cr;
+                    ui.visuals_mut().widgets.active.corner_radius = right_cr;
+                    ui.visuals_mut().widgets.open.corner_radius = right_cr;
+
+                    ui.add_enabled_ui(is_loaded, |ui| {
+                        ui.menu_button("▼", |ui| {
+                            ui.visuals_mut().widgets.inactive.corner_radius = egui::CornerRadius::same(3);
+                            ui.visuals_mut().widgets.hovered.corner_radius = egui::CornerRadius::same(3);
+
+                            let is_vcd30 = matches!(
+                                self.kernel.disc_type,
+                                Some(crate::vcd::VcdDiscType::Vcd30Interactive { .. })
+                            );
+                            let cur_mode = self.kernel.active_mode;
+
+                            if is_vcd30 {
+                                if cur_mode == crate::core::kernel::ActiveDiscMode::Vcd30Interactive {
+                                    if ui.button("🎬 重置并使用 VCD 2.0 模式播放").clicked() {
+                                        ui.close();
+                                        if let Err(e) = self.kernel.switch_active_mode(crate::core::kernel::ActiveDiscMode::Vcd20Classic) {
+                                            self.set_status(format!("切换失败: {}", e));
+                                        } else {
+                                            self.set_status("已切换至 VCD 2.0 经典模式");
+                                            self.texture = None;
+                                            self.texture_dirty = true;
+                                            ctx.request_repaint();
+                                        }
+                                    }
+                                    if ui.button("📺 重置并使用 VCD 1.0 模式播放").clicked() {
+                                        ui.close();
+                                        if let Err(e) = self.kernel.switch_active_mode(crate::core::kernel::ActiveDiscMode::Vcd10Linear) {
+                                            self.set_status(format!("切换失败: {}", e));
+                                        } else {
+                                            self.set_status("已切换至 VCD 1.0 纯视频模式");
+                                            self.texture = None;
+                                            self.texture_dirty = true;
+                                            ctx.request_repaint();
+                                        }
+                                    }
+                                } else {
+                                    if ui.button("💿 重置并恢复 VCD 3.0 互动模式").clicked() {
+                                        ui.close();
+                                        if let Err(e) = self.kernel.switch_active_mode(crate::core::kernel::ActiveDiscMode::Vcd30Interactive) {
+                                            self.set_status(format!("恢复失败: {}", e));
+                                        } else {
+                                            self.set_status("已恢复 VCD 3.0 互动模式");
+                                            self.texture = None;
+                                            self.texture_dirty = true;
+                                            ctx.request_repaint();
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                    });
+                });
 
                 ui.add(egui::Separator::default().spacing(0.0));
 
-                // Video playback controls (persistent toolbar row: active during video, disabled when inactive)
+                let is_vcd12 = is_loaded && self.kernel.active_mode != crate::core::kernel::ActiveDiscMode::Vcd30Interactive;
+
+                // Video playback controls
                 let mut stop_video = false;
+                let mut prev_track = false;
+                let mut next_track = false;
+
+                if is_vcd12 {
+                    let has_tracks = !self.kernel.tracks.is_empty();
+                    if ui
+                        .add_enabled(has_tracks, egui::Button::new("⏮"))
+                        .on_hover_text("上一曲")
+                        .clicked()
+                    {
+                        prev_track = true;
+                    }
+                }
+
                 if let Some(ref mut player) = self.kernel.active_video {
                     let is_playing = player.is_playing();
                     let (play_icon, play_tooltip) = if is_playing {
@@ -452,64 +594,136 @@ impl VcdPlayerApp {
                     if ui.button(play_icon).on_hover_text(play_tooltip).clicked() {
                         player.toggle_play_pause();
                     }
-
-                    if ui.button("⏹").on_hover_text("停止并返回 (ESC)").clicked() {
-                        stop_video = true;
-                    }
-
-                    let cur = player.current_time();
-                    let dur = player.duration();
-                    let cur_min = (cur / 60.0) as u32;
-                    let cur_sec = (cur % 60.0) as u32;
-                    let dur_min = (dur / 60.0) as u32;
-                    let dur_sec = (dur % 60.0) as u32;
-                    let time_text = format!("{:02}:{:02} / {:02}:{:02}", cur_min, cur_sec, dur_min, dur_sec);
-
-                    let font_id = egui::TextStyle::Monospace.resolve(ui.style());
-                    let time_galley = ui.painter().layout_no_wrap(
-                        time_text.clone(),
-                        font_id,
-                        ui.visuals().text_color(),
-                    );
-                    let time_width = time_galley.size().x;
-                    let slider_width = (ui.available_width() - time_width - ui.spacing().item_spacing.x - 2.0).max(40.0);
-                    ui.spacing_mut().slider_width = slider_width;
-
-                    let mut seek_pos = cur;
-                    let slider = egui::Slider::new(&mut seek_pos, 0.0..=dur.max(1.0))
-                        .show_value(false)
-                        .text("");
-                    if ui.add(slider).changed() {
-                        player.seek(seek_pos);
-                    }
-
-                    ui.label(egui::RichText::new(time_text).monospace());
                 } else {
-                    ui.add_enabled(false, egui::Button::new("▶"))
+                    let can_start = is_vcd12 && !self.kernel.tracks.is_empty();
+                    if ui
+                        .add_enabled(can_start, egui::Button::new("▶"))
                         .on_hover_text("播放 (Space)")
-                        .on_disabled_hover_text("播放 (Space)");
-                    ui.add_enabled(false, egui::Button::new("⏹"))
-                        .on_hover_text("停止并返回 (ESC)")
-                        .on_disabled_hover_text("停止并返回 (ESC)");
+                        .clicked()
+                    {
+                        let idx = self.kernel.current_track_index.unwrap_or(0);
+                        let _ = self.kernel.play_track(idx);
+                        self.texture = None;
+                        self.texture_dirty = true;
+                        ctx.request_repaint();
+                    }
+                }
 
-                    let time_text = "--:-- / --:--";
-                    let font_id = egui::TextStyle::Monospace.resolve(ui.style());
-                    let time_galley = ui.painter().layout_no_wrap(
-                        time_text.to_string(),
-                        font_id,
-                        ui.visuals().text_color(),
-                    );
-                    let time_width = time_galley.size().x;
-                    let slider_width = (ui.available_width() - time_width - ui.spacing().item_spacing.x - 2.0).max(40.0);
-                    ui.spacing_mut().slider_width = slider_width;
+                if is_vcd12 {
+                    let has_tracks = !self.kernel.tracks.is_empty();
+                    if ui
+                        .add_enabled(has_tracks, egui::Button::new("⏭"))
+                        .on_hover_text("下一曲")
+                        .clicked()
+                    {
+                        next_track = true;
+                    }
+                }
 
-                    let mut dummy_pos = 0.0;
-                    ui.add_enabled(
-                        false,
-                        egui::Slider::new(&mut dummy_pos, 0.0..=1.0).show_value(false).text(""),
-                    );
+                let can_stop = self.kernel.active_video.is_some();
+                if ui
+                    .add_enabled(can_stop, egui::Button::new("⏹"))
+                    .on_hover_text("停止 (ESC)")
+                    .clicked()
+                {
+                    stop_video = true;
+                }
 
-                    ui.label(egui::RichText::new(time_text).monospace().color(Color32::DARK_GRAY));
+                // Right side: Playback Mode (icon), Channel Mode (icon), Timecode, and Slider in remaining space
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // 1. Rightmost: Playback Mode (Icon only)
+                    let mode_btn = ui
+                        .add_enabled(
+                            is_loaded,
+                            egui::Button::new(self.kernel.playback_mode.icon())
+                                .min_size(Vec2::new(26.0, 0.0)),
+                        )
+                        .on_hover_text(format!(
+                            "播放模式: {} (点击循环切换)",
+                            self.kernel.playback_mode.description()
+                        ));
+                    if mode_btn.clicked() {
+                        self.kernel.playback_mode = self.kernel.playback_mode.cycle();
+                        self.set_status(format!("播放模式: {}", self.kernel.playback_mode.description()));
+                    }
+
+                    // 2. Channel Mode (Icon only)
+                    let channel_btn = ui
+                        .add_enabled(
+                            is_loaded,
+                            egui::Button::new(self.kernel.channel_mode.icon())
+                                .min_size(Vec2::new(26.0, 0.0)),
+                        )
+                        .on_hover_text(format!(
+                            "声道模式: {} (点击切换)",
+                            self.kernel.channel_mode.description()
+                        ));
+                    if channel_btn.clicked() {
+                        self.kernel.channel_mode = self.kernel.channel_mode.cycle();
+                        if let Some(ref mut player) = self.kernel.active_video {
+                            player.set_channel_mode(self.kernel.channel_mode);
+                        }
+                        self.set_status(format!("声道模式: {}", self.kernel.channel_mode.description()));
+                    }
+
+                    // Margin between timecode and channel/mode buttons
+                    ui.add_space(6.0);
+
+                    // 3. Timecode
+                    let time_text = if let Some(ref player) = self.kernel.active_video {
+                        let cur = player.current_time();
+                        let dur = player.duration();
+                        let cur_min = (cur / 60.0) as u32;
+                        let cur_sec = (cur % 60.0) as u32;
+                        let dur_min = (dur / 60.0) as u32;
+                        let dur_sec = (dur % 60.0) as u32;
+                        format!("{:02}:{:02} / {:02}:{:02}", cur_min, cur_sec, dur_min, dur_sec)
+                    } else {
+                        "--:-- / --:--".to_string()
+                    };
+
+                    if self.kernel.active_video.is_some() {
+                        ui.label(egui::RichText::new(&time_text).monospace());
+                    } else {
+                        ui.label(egui::RichText::new(&time_text).monospace().color(Color32::DARK_GRAY));
+                    }
+
+                    // 4. Remaining middle space: Seek Slider
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        let avail_w = ui.available_width().max(40.0);
+                        ui.spacing_mut().slider_width = avail_w;
+
+                        if let Some(ref mut player) = self.kernel.active_video {
+                            let dur = player.duration();
+                            let mut seek_pos = player.current_time();
+                            let slider = egui::Slider::new(&mut seek_pos, 0.0..=dur.max(1.0))
+                                .show_value(false)
+                                .text("");
+                            if ui.add(slider).changed() {
+                                player.seek(seek_pos);
+                            }
+                        } else {
+                            let mut dummy_pos = 0.0;
+                            ui.add_enabled(
+                                false,
+                                egui::Slider::new(&mut dummy_pos, 0.0..=1.0).show_value(false).text(""),
+                            );
+                        }
+                    });
+                });
+
+                if prev_track {
+                    let _ = self.kernel.play_prev_track();
+                    self.texture = None;
+                    self.texture_dirty = true;
+                    ctx.request_repaint();
+                }
+
+                if next_track {
+                    let _ = self.kernel.play_next_track(false);
+                    self.texture = None;
+                    self.texture_dirty = true;
+                    ctx.request_repaint();
                 }
 
                 if stop_video {
@@ -525,8 +739,11 @@ impl VcdPlayerApp {
 
             // Row 2: Navigation buttons, Debug checkboxes (right after Forward button), Page info & Status
             ui.horizontal(|ui| {
-                let can_back = !self.kernel.history_stack.is_empty();
-                let can_fwd = !self.kernel.forward_stack.is_empty();
+                let is_loaded = self.is_disc_loaded();
+                let is_vcd30 = is_loaded && self.kernel.active_mode == crate::core::kernel::ActiveDiscMode::Vcd30Interactive;
+                let can_back = is_vcd30 && !self.kernel.history_stack.is_empty();
+                let can_fwd = is_vcd30 && !self.kernel.forward_stack.is_empty();
+                let can_home = is_vcd30;
 
                 if ui
                     .add_enabled(can_back, egui::Button::new("⏮ 后退"))
@@ -540,7 +757,11 @@ impl VcdPlayerApp {
                     }
                 }
 
-                if ui.button("🏠 主页").clicked() {
+                if ui
+                    .add_enabled(can_home, egui::Button::new("🏠 主页"))
+                    .on_hover_text("返回主页")
+                    .clicked()
+                {
                     if let Ok(()) = self.kernel.go_home() {
                         self.set_status("已返回主页");
                         self.texture = None;
@@ -563,15 +784,22 @@ impl VcdPlayerApp {
 
                 ui.add(egui::Separator::default().spacing(0.0));
 
-                // Requirement 3: 热区高亮和遥控器开关放在最底部的工具条上，在 前进按钮的后面
+                // Requirement 3: 热区高亮和侧边面板开关放在最底部的工具条上，在 前进按钮的后面
                 ui.checkbox(&mut self.show_hotspots, "🎯 热区高亮");
-                ui.checkbox(&mut self.show_remote, "🎮 遥控器");
+                let mut show_panel = self.show_remote;
+                if ui
+                    .checkbox(&mut show_panel, "🎮 侧边面板")
+                    .on_hover_text("展开遥控器与曲目列表侧边栏")
+                    .changed()
+                {
+                    self.toggle_side_panel(&ctx, show_panel);
+                }
 
                 ui.add(egui::Separator::default().spacing(0.0));
 
-                // Right side: About button on the far right (after playback status bar)
+                // Right side: About button on the far right (after playback status bar, icon only)
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("ℹ 关于").on_hover_text("关于软件").clicked() {
+                    if ui.button("ℹ").on_hover_text("关于软件").clicked() {
                         self.show_about = true;
                     }
 
@@ -707,14 +935,36 @@ impl VcdPlayerApp {
             crate::ui::dialogs::show_about_dialog(&ctx, &mut self.show_about);
         }
 
-        // 5. Right Sidebar: Virtual Remote Control
+        // 5. Right Sidebar: Combined Remote Control & Track Drawer
         if self.show_remote {
+            let mut close_panel = false;
             egui::Panel::right("remote_control_panel")
-                .default_size(170.0)
+                .resizable(false)
+                .default_size(230.0)
                 .show(ui, |ui| {
                     ui.add_space(4.0);
-                    ui.heading("🎮 遥控器");
+
+                    // Tab Selector: Remote vs Tracks
+                    ui.horizontal(|ui| {
+                        ui.selectable_value(&mut self.drawer_tab, DrawerTab::Remote, "🎮 遥控器");
+                        let track_count = self.kernel.tracks.len();
+                        let track_title = if track_count > 0 {
+                            format!("📑 曲目 ({})", track_count)
+                        } else {
+                            "📑 曲目列表".to_string()
+                        };
+                        ui.selectable_value(&mut self.drawer_tab, DrawerTab::Tracks, track_title);
+
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if close_panel_button(ui).on_hover_text("关闭侧面板").clicked() {
+                                close_panel = true;
+                            }
+                        });
+                    });
                     ui.separator();
+
+                    match self.drawer_tab {
+                        DrawerTab::Remote => {
 
                     let audio_ok = self.kernel.audio.is_audio_available();
                     let (audio_txt, audio_color) = if audio_ok {
@@ -863,7 +1113,67 @@ impl VcdPlayerApp {
                         crate::core::script_vm::VmState::Error(err) => err.clone(),
                     };
                     ui.label(egui::RichText::new(format!("脚本: {}", vm_status)).size(11.0).color(Color32::LIGHT_GRAY));
+                        }
+                        DrawerTab::Tracks => {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "当前模式: {}",
+                                        self.kernel.active_mode.label()
+                                    ))
+                                    .size(11.0)
+                                    .color(Color32::LIGHT_GRAY),
+                                );
+                            });
+                            ui.add_space(4.0);
+
+                            if self.kernel.tracks.is_empty() {
+                                ui.vertical_centered(|ui| {
+                                    ui.add_space(20.0);
+                                    ui.label(egui::RichText::new("暂未发现音视频曲目").color(Color32::GRAY));
+                                    ui.label(
+                                        egui::RichText::new("请加载有效光盘或视频文件")
+                                            .size(11.0)
+                                            .color(Color32::DARK_GRAY),
+                                    );
+                                });
+                            } else {
+                                let mut selected_track_idx = None;
+                                let mut selected_track_title = String::new();
+
+                                egui::ScrollArea::vertical()
+                                    .auto_shrink([false, false])
+                                    .show(ui, |ui| {
+                                        for (i, track) in self.kernel.tracks.iter().enumerate() {
+                                            let is_current =
+                                                self.kernel.current_track_index == Some(i);
+                                            let time_str = track.msf_start.as_deref().unwrap_or("");
+                                            let item_label = if time_str.is_empty() {
+                                                format!("{:02}. {}", track.index, track.title)
+                                            } else {
+                                                format!("{:02}. {} [{}]", track.index, track.title, time_str)
+                                            };
+                                            if ui.selectable_label(is_current, item_label).clicked() {
+                                                selected_track_idx = Some(i);
+                                                selected_track_title = track.title.clone();
+                                            }
+                                        }
+                                    });
+
+                                if let Some(idx) = selected_track_idx {
+                                    let _ = self.kernel.play_track(idx);
+                                    self.set_status(format!("正在播放: {}", selected_track_title));
+                                    self.texture = None;
+                                    self.texture_dirty = true;
+                                    ctx.request_repaint();
+                                }
+                            }
+                        }
+                    }
                 });
+            if close_panel {
+                self.toggle_side_panel(&ctx, false);
+            }
         }
 
         // 6. Central Interactive Canvas Viewport

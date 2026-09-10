@@ -38,6 +38,7 @@ pub struct VideoPlayer {
     sample_rate: u32,
     has_audio: bool,
     has_video: bool,
+    pub channel_mode: crate::audio::AudioChannelMode,
 }
 
 impl VideoPlayer {
@@ -107,7 +108,13 @@ impl VideoPlayer {
             sample_rate,
             has_audio,
             has_video,
+            channel_mode: crate::audio::AudioChannelMode::Stereo,
         })
+    }
+
+    /// Sets the active audio channel mode (Stereo, LeftOnly, RightOnly).
+    pub fn set_channel_mode(&mut self, mode: crate::audio::AudioChannelMode) {
+        self.channel_mode = mode;
     }
 
     /// Advances playback, keeping audio buffer fed and decoding video frames on time.
@@ -122,7 +129,8 @@ impl VideoPlayer {
             if let Some(ref sink) = self.audio_sink {
                 // Keep around 4 to 8 chunks (100~200ms) queued in sink
                 while sink.len() < 6 && !self.decoder.has_ended() {
-                    if let Some(audio) = self.decoder.decode_audio_samples() {
+                    if let Some(mut audio) = self.decoder.decode_audio_samples() {
+                        self.channel_mode.apply_to_interleaved_samples(&mut audio.samples);
                         self.audio_samples_per_chunk = audio.count;
                         let source = SamplesBuffer::new(2, self.sample_rate, audio.samples);
                         sink.append(source);

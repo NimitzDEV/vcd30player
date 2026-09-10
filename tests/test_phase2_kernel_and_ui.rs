@@ -1,6 +1,8 @@
 mod common;
 
-use vcd30_player::core::kernel::{CANVAS_HEIGHT, CANVAS_WIDTH, VcdKernel};
+use vcd30_player::core::kernel::{ActiveDiscMode, PlaybackMode, CANVAS_HEIGHT, CANVAS_WIDTH, VcdKernel};
+use vcd30_player::audio::AudioChannelMode;
+use vcd30_player::ui::app::DrawerTab;
 
 #[test]
 fn test_kernel_open_disc_and_autorun() {
@@ -242,8 +244,8 @@ fn test_ui_status_duration_and_no_path() {
     // The status message must NOT contain file path like 'C:\' or 'mock_disc'
     let status_str = &app.status_message;
     assert!(
-        status_str.starts_with("已重置光盘: "),
-        "Status must start with '已重置光盘: ', got: {}",
+        status_str.contains("从头开始") || status_str.starts_with("已重置"),
+        "Status must indicate reset/restart, got: {}",
         status_str
     );
     assert!(
@@ -256,4 +258,135 @@ fn test_ui_status_duration_and_no_path() {
         "Status message must contain disc type, got: {}",
         status_str
     );
+}
+
+#[test]
+fn test_audio_channel_mode_cycle_and_apply() {
+    let mode = AudioChannelMode::Stereo;
+    assert_eq!(mode.label(), "🔊 立体声");
+    assert_eq!(mode.icon(), "🔊");
+    assert_eq!(mode.cycle(), AudioChannelMode::LeftOnly);
+    assert_eq!(mode.cycle().icon(), "🎤");
+    assert_eq!(mode.cycle().cycle(), AudioChannelMode::RightOnly);
+    assert_eq!(mode.cycle().cycle().icon(), "🎵");
+    assert_eq!(mode.cycle().cycle().cycle(), AudioChannelMode::Stereo);
+
+    // Verify audio channel mixing on interleaved samples
+    let mut samples = vec![100i16, 200i16, 300i16, 400i16];
+    AudioChannelMode::LeftOnly.apply_to_interleaved_samples(&mut samples);
+    assert_eq!(samples, vec![100, 100, 300, 300], "Left channel must be copied to right channel");
+
+    let mut samples2 = vec![100i16, 200i16, 300i16, 400i16];
+    AudioChannelMode::RightOnly.apply_to_interleaved_samples(&mut samples2);
+    assert_eq!(samples2, vec![200, 200, 400, 400], "Right channel must be copied to left channel");
+}
+
+#[test]
+fn test_playback_mode_cycle() {
+    let mode = PlaybackMode::Sequential;
+    assert_eq!(mode.label(), "➡ 顺序播放");
+    assert_eq!(mode.icon(), "➡");
+    assert_eq!(mode.cycle(), PlaybackMode::ListRepeat);
+    assert_eq!(mode.cycle().label(), "🔁 列表循环");
+    assert_eq!(mode.cycle().icon(), "🔁");
+    assert_eq!(mode.cycle().cycle(), PlaybackMode::SingleRepeat);
+    assert_eq!(mode.cycle().cycle().label(), "🔂 单曲循环");
+    assert_eq!(mode.cycle().cycle().icon(), "🔂");
+    assert_eq!(mode.cycle().cycle().cycle(), PlaybackMode::Sequential);
+}
+
+#[test]
+fn test_active_disc_mode_switching_and_track_navigation() {
+    let disc_path = common::get_test_disc_root();
+    let mut kernel = VcdKernel::new();
+    kernel.open_disc(disc_path).expect("Failed to open disc");
+
+    // Initially loads in VCD 3.0 Interactive mode
+    assert_eq!(kernel.active_mode, ActiveDiscMode::Vcd30Interactive);
+    assert!(!kernel.tracks.is_empty(), "Disc tracks must be populated");
+    let track_count = kernel.tracks.len();
+
+    // Switch to VCD 2.0 Classic mode
+    kernel.switch_active_mode(ActiveDiscMode::Vcd20Classic).expect("Failed to switch to VCD 2.0");
+    assert_eq!(kernel.active_mode, ActiveDiscMode::Vcd20Classic);
+    assert!(kernel.current_page.is_none(), "CHM page should be cleared in VCD 2.0 mode");
+    assert_eq!(kernel.current_track_index, Some(0), "Track 0 should be active in VCD 2.0 mode");
+    assert!(kernel.active_video.is_some(), "Video should be active playing track 0");
+
+    // Test next track navigation
+    let has_next = kernel.play_next_track(false).expect("Failed to play next track");
+    if track_count > 1 {
+        assert!(has_next);
+        assert_eq!(kernel.current_track_index, Some(1));
+    }
+
+    // Test prev track navigation
+    let has_prev = kernel.play_prev_track().expect("Failed to play prev track");
+    assert!(has_prev);
+    assert_eq!(kernel.current_track_index, Some(0));
+
+    // Switch back to VCD 3.0 Interactive mode
+    kernel.switch_active_mode(ActiveDiscMode::Vcd30Interactive).expect("Failed to restore VCD 3.0");
+    assert_eq!(kernel.active_mode, ActiveDiscMode::Vcd30Interactive);
+    assert_eq!(kernel.current_page_name, "HOMEPAGE.CHM");
+    assert!(kernel.current_page.is_some());
+}
+
+#[test]
+fn test_kernel_restart_current_mode_preserves_mode() {
+    let disc_path = common::get_test_disc_root();
+    let mut kernel = VcdKernel::new();
+    kernel.open_disc(disc_path).expect("Failed to open disc");
+
+    // 1. In VCD 3.0 Interactive mode: navigate to subpage then restart
+    kernel.load_page("T_B.CHM", true).unwrap();
+    assert_eq!(kernel.current_page_name, "T_B.CHM");
+    kernel.restart_current_mode().expect("Failed to restart VCD 3.0 mode");
+    assert_eq!(kernel.active_mode, ActiveDiscMode::Vcd30Interactive, "Mode must remain VCD 3.0");
+    assert_eq!(kernel.current_page_name, "HOMEPAGE.CHM", "Must reset to HOMEPAGE.CHM");
+
+    // 2. In VCD 2.0 Classic mode: advance track then restart
+    kernel.switch_active_mode(ActiveDiscMode::Vcd20Classic).unwrap();
+    assert_eq!(kernel.active_mode, ActiveDiscMode::Vcd20Classic);
+    if kernel.tracks.len() > 1 {
+        let _ = kernel.play_next_track(false);
+        assert_eq!(kernel.current_track_index, Some(1));
+    }
+    kernel.restart_current_mode().expect("Failed to restart VCD 2.0 mode");
+    assert_eq!(kernel.active_mode, ActiveDiscMode::Vcd20Classic, "Mode must remain VCD 2.0");
+    assert_eq!(kernel.current_track_index, Some(0), "Track must reset to track 0");
+}
+
+#[test]
+fn test_ui_drawer_tab_selection() {
+    let kernel = VcdKernel::new();
+    let mut app = vcd30_player::ui::app::VcdPlayerApp::from_kernel(kernel);
+    assert_eq!(app.drawer_tab, DrawerTab::Remote, "Drawer should default to Remote tab");
+
+    app.drawer_tab = DrawerTab::Tracks;
+    assert_eq!(app.drawer_tab, DrawerTab::Tracks, "Drawer tab should be switchable to Tracks");
+}
+
+#[test]
+fn test_navigation_disabled_in_non_vcd30_mode() {
+    let disc_path = common::get_test_disc_root();
+    let mut kernel = VcdKernel::new();
+    kernel.open_disc(disc_path).expect("Failed to open disc");
+
+    // Switch to VCD 2.0 Classic mode
+    kernel.switch_active_mode(ActiveDiscMode::Vcd20Classic).unwrap();
+    assert_eq!(kernel.active_mode, ActiveDiscMode::Vcd20Classic);
+    assert!(kernel.current_page.is_none());
+
+    // In VCD 2.0 mode, go_home, go_back, go_forward must not load any CHM or trigger interactive VM
+    kernel.go_home().expect("go_home in VCD 2.0 should be safe no-op");
+    assert!(kernel.current_page.is_none(), "CHM page must not be loaded in VCD 2.0 mode");
+    assert!(kernel.current_page_name.is_empty());
+    assert!(!kernel.is_vm_active(), "VM must not be activated in VCD 2.0 mode");
+
+    let back_res = kernel.go_back().unwrap();
+    assert!(!back_res, "go_back must return false in VCD 2.0 mode");
+
+    let fwd_res = kernel.go_forward().unwrap();
+    assert!(!fwd_res, "go_forward must return false in VCD 2.0 mode");
 }

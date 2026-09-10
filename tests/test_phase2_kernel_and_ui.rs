@@ -212,3 +212,48 @@ fn test_psyche_dense_hotspots_no_overlap() {
     let hit6 = kernel.hit_test(60, 235).expect("Should hit Option 6");
     assert_eq!(hit6.script_entry_line, Some(280));
 }
+
+#[test]
+fn test_ui_about_dialog_state() {
+    let kernel = VcdKernel::new();
+    let mut app = vcd30_player::ui::app::VcdPlayerApp::from_kernel(kernel);
+    assert!(!app.show_about, "About dialog must be initially closed");
+    app.show_about = true;
+    assert!(app.show_about, "About dialog state must be toggleable");
+}
+
+#[test]
+fn test_ui_status_duration_and_no_path() {
+    assert_eq!(
+        vcd30_player::ui::app::STATUS_MESSAGE_DURATION,
+        std::time::Duration::from_secs(5),
+        "Status message duration must be 5 seconds"
+    );
+
+    let disc_path = common::get_test_disc_root();
+    let mut kernel = VcdKernel::new();
+    kernel.open_disc(disc_path.clone()).expect("Failed to open disc");
+
+    let mut app = vcd30_player::ui::app::VcdPlayerApp::from_kernel(kernel);
+    // Reset disc using headless egui Context
+    let ctx = vcd30_player::egui::Context::default();
+    app.reset_disc(&ctx);
+
+    // The status message must NOT contain file path like 'C:\' or 'mock_disc'
+    let status_str = &app.status_message;
+    assert!(
+        status_str.starts_with("已重置光盘: "),
+        "Status must start with '已重置光盘: ', got: {}",
+        status_str
+    );
+    assert!(
+        !status_str.contains(":\\") && !status_str.contains("mock_disc") && !status_str.contains("/"),
+        "Status message must not contain disc paths, got: {}",
+        status_str
+    );
+    assert!(
+        status_str.contains("VCD 3.0"),
+        "Status message must contain disc type, got: {}",
+        status_str
+    );
+}

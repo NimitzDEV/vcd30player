@@ -313,6 +313,7 @@ pub struct VcdKernel {
     pub start_time: Instant,
     pub active_video: Option<VideoPlayer>,
     pub karaoke_playlist: KaraokePlaylist,
+    pub disc_type: Option<crate::vcd::VcdDiscType>,
 }
 
 impl VcdKernel {
@@ -323,6 +324,7 @@ impl VcdKernel {
         }
         Self {
             disc_root: PathBuf::new(),
+            disc_type: None,
             current_page_name: String::new(),
             current_page: None,
             current_bg_image: None,
@@ -537,6 +539,9 @@ impl VcdKernel {
         self.forward_stack.clear();
         self.sprite_cache.clear();
         self.karaoke_playlist.clear();
+
+        let disc_type = crate::vcd::detect_disc(&self.disc_root);
+        self.disc_type = Some(disc_type);
 
         let cls_path = self.find_file("AUTORUN.CLS");
         let mut initial_page = "HOMEPAGE.CHM".to_string();

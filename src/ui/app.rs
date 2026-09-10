@@ -13,6 +13,7 @@ pub struct VcdPlayerApp {
     pub show_hotspots: bool,
     pub show_metadata: bool,
     pub show_remote: bool,
+    pub show_about: bool,
     pub hovered_hotspot: Option<String>,
     pub status_message: String,
     pub status_timestamp: Option<std::time::Instant>,
@@ -64,6 +65,9 @@ fn setup_custom_fonts(ctx: &egui::Context) {
     ctx.set_fonts(fonts);
 }
 
+/// Transient status message linger duration (5 seconds).
+pub const STATUS_MESSAGE_DURATION: std::time::Duration = std::time::Duration::from_secs(5);
+
 impl VcdPlayerApp {
     pub fn new(cc: &eframe::CreationContext<'_>, initial_disc: Option<PathBuf>) -> Self {
         setup_custom_fonts(&cc.egui_ctx);
@@ -77,7 +81,12 @@ impl VcdPlayerApp {
                 if let Err(e) = kernel.open_disc(root.clone()) {
                     status = format!("打开光盘失败: {}", e);
                 } else {
-                    status = format!("已加载光盘: {}", root.display());
+                    let disc_desc = kernel
+                        .disc_type
+                        .as_ref()
+                        .map(|t| t.to_string())
+                        .unwrap_or_else(|| "光盘".to_string());
+                    status = format!("已加载光盘: {}", disc_desc);
                     has_initial_disc = true;
                 }
             }
@@ -90,6 +99,7 @@ impl VcdPlayerApp {
             show_hotspots: false,
             show_metadata: false,
             show_remote: false,
+            show_about: false,
             hovered_hotspot: None,
             status_message: status,
             status_timestamp: if has_initial_disc {
@@ -110,6 +120,7 @@ impl VcdPlayerApp {
             show_hotspots: false,
             show_metadata: false,
             show_remote: false,
+            show_about: false,
             hovered_hotspot: None,
             status_message: String::new(),
             status_timestamp: None,
@@ -117,7 +128,7 @@ impl VcdPlayerApp {
         }
     }
 
-    /// Sets a temporary status message (Status 1) that will be displayed for 2 seconds.
+    /// Sets a temporary status message (Status 1) that will be displayed for 5 seconds.
     pub fn set_status(&mut self, msg: impl Into<String>) {
         self.status_message = msg.into();
         self.status_timestamp = Some(std::time::Instant::now());
@@ -193,6 +204,7 @@ impl VcdPlayerApp {
         self.kernel.active_alert = None;
         self.kernel.sprite_cache.clear();
         self.kernel.karaoke_playlist.clear();
+        self.kernel.disc_type = None;
         self.kernel.vm.terminate();
         self.texture = None;
         self.texture_dirty = true;
@@ -207,7 +219,13 @@ impl VcdPlayerApp {
             if let Err(e) = self.kernel.open_disc(root.clone()) {
                 self.set_status(format!("重置失败: {}", e));
             } else {
-                self.set_status(format!("已重置光盘: {}", root.display()));
+                let disc_desc = self
+                    .kernel
+                    .disc_type
+                    .as_ref()
+                    .map(|t| t.to_string())
+                    .unwrap_or_else(|| "光盘".to_string());
+                self.set_status(format!("已重置光盘: {}", disc_desc));
                 self.texture = None;
                 self.texture_dirty = true;
                 ctx.request_repaint();
@@ -352,7 +370,13 @@ impl VcdPlayerApp {
                                 if let Err(e) = self.kernel.open_disc(folder.clone()) {
                                     self.set_status(format!("打开失败: {}", e));
                                 } else {
-                                    self.set_status(format!("已打开: {}", folder.display()));
+                                    let disc_desc = self
+                                        .kernel
+                                        .disc_type
+                                        .as_ref()
+                                        .map(|t| t.to_string())
+                                        .unwrap_or_else(|| "光盘".to_string());
+                                    self.set_status(format!("已打开: {}", disc_desc));
                                     self.texture = None;
                                     self.texture_dirty = true;
                                     ctx.request_repaint();
@@ -545,32 +569,36 @@ impl VcdPlayerApp {
 
                 ui.add(egui::Separator::default().spacing(0.0));
 
-                // Unified Status Zone:
-                // 1. Status 2 (Cyan): Immediate hover target (e.g. "👉 目标: xxx")
-                // 2. Status 1 (Gray): Transient status message (e.g. "已打开: xxx", "已跳转至: xxx") for 2 seconds
-                // 3. Default:
-                //    - Empty / Idle: Guide text (e.g. "空闲 - 请点击“加载光盘”载入 VCD 光盘", "光盘已弹出，请加载光盘")
-                //    - Non-empty: [页面] · [视频]
-                if let Some(target) = &self.hovered_hotspot {
-                    ui.label(
-                        egui::RichText::new(format!("👉 目标: {}", target))
-                            .color(Color32::from_rgb(0, 220, 255)),
-                    );
-                } else if let Some(ts) = self.status_timestamp {
-                    let elapsed = ts.elapsed();
-                    if elapsed < std::time::Duration::from_secs(2) {
-                        ui.label(
-                            egui::RichText::new(&self.status_message)
-                                .color(Color32::from_rgb(180, 180, 180)),
-                        );
-                        let remaining = std::time::Duration::from_secs(2).saturating_sub(elapsed);
-                        ctx.request_repaint_after(remaining);
-                    } else {
-                        self.render_default_status(ui);
+                // Right side: About button on the far right (after playback status bar)
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("ℹ 关于").on_hover_text("关于软件").clicked() {
+                        self.show_about = true;
                     }
-                } else {
-                    self.render_default_status(ui);
-                }
+
+                    // Remaining middle space: Unified Status Zone
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        if let Some(target) = &self.hovered_hotspot {
+                            ui.label(
+                                egui::RichText::new(format!("👉 目标: {}", target))
+                                    .color(Color32::from_rgb(0, 220, 255)),
+                            );
+                        } else if let Some(ts) = self.status_timestamp {
+                            let elapsed = ts.elapsed();
+                            if elapsed < STATUS_MESSAGE_DURATION {
+                                ui.label(
+                                    egui::RichText::new(&self.status_message)
+                                        .color(Color32::from_rgb(180, 180, 180)),
+                                );
+                                let remaining = STATUS_MESSAGE_DURATION.saturating_sub(elapsed);
+                                ctx.request_repaint_after(remaining);
+                            } else {
+                                self.render_default_status(ui);
+                            }
+                        } else {
+                            self.render_default_status(ui);
+                        }
+                    });
+                });
             });
 
             // Symmetrical bottom margin (6px to window frame border)
@@ -672,6 +700,11 @@ impl VcdPlayerApp {
                 self.kernel.terminate_script();
                 self.texture_dirty = true;
             }
+        }
+
+        // Modal Dialog: About Window
+        if self.show_about {
+            crate::ui::dialogs::show_about_dialog(&ctx, &mut self.show_about);
         }
 
         // 5. Right Sidebar: Virtual Remote Control

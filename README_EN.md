@@ -5,11 +5,7 @@
 [![Rust](https://img.shields.io/badge/Language-Rust_2024_Edition-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/License-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
-**A modern, cross-platform VCD 3.0 player written in Rust.**
-
-vcd30player is an open-source reimplementation of the **VCD 3.0 interactive CD-ROM environment**, bringing interactive VCD 3.0 content from the late 1990s back to modern Windows, macOS, and Linux.
-
-> **No Windows 98. No virtual machine. No original player required.**
+A cross-platform VCD 3.0 and VCD 2.0 interactive disc player written in Rust. It runs legacy interactive VCD titles on modern Windows, macOS, and Linux systems without virtual machines or legacy Windows environments.
 
 [简体中文文档](README.md)
 
@@ -17,84 +13,58 @@ vcd30player is an open-source reimplementation of the **VCD 3.0 interactive CD-R
 
 ## What is VCD 3.0?
 
-VCD 3.0 was an extended VCD format developed in the late 1990s, adding interactive multimedia capabilities on top of conventional VCD playback.
+VCD 3.0 was an extended multimedia disc format introduced in the late 1990s that added page-based interactive menus on top of standard VCD video playback.
 
-Unlike ordinary VCDs, a VCD 3.0 disc can contain:
+Unlike linear video VCDs, a VCD 3.0 disc typically contains:
 
-* Interactive menus and clickable regions
-* Compiled HTML-like pages (`.CHM`)
-* Indexed/paletted images (`.YBM`)
-* Embedded scripts and navigation logic
-* MPEG-1 video (`.DAT`)
-* Background music and sound effects (`.WAV`)
-* Karaoke and other interactive applications
+* Compiled markup pages (`.CHM`) with layout definitions and clickable hotspots
+* 8-bit indexed palette images (`.YBM`)
+* Embedded control scripts for logic and navigation
+* MPEG-1 video streams (`.DAT`)
+* Background audio and sound effects (`.WAV`)
+* Karaoke playlist selection and interactive applications
 
-The original software stack depended on Windows-era multimedia components and proprietary runtime software that are no longer available on modern systems.
-
-**vcd30player aims to preserve this software ecosystem without emulating the entire old PC.**
+Original player software relied on proprietary Windows 9x components and runtimes that cannot run directly on modern operating systems. vcd30player parses the underlying disc formats and implements the runtime natively.
 
 ---
 
-## ✨ Features
+## Features
 
-### Disc & Format Support
+### VCD 3.0 Support
 
-#### VCD 3.0 Support
-* **Disc Structure & Startup Configuration**: Automatic detection of VCD 3.0 compliant disc or folder layouts, parsing `AUTORUN.CLS` and `ENREACH.CLS` configurations to accurately pinpoint the startup homepage and intro video settings
-* **Compiled Interactive Page Parsing**: Deep binary parsing of `<COMPHTML>` / `.CHM` page files, supporting page layout composition, polygonal/rectangular clickable hotspots, page navigation routing tables, and composite overlay layer synthesis
-* **Palette Image Decoding & Compositing**: High-performance decoding of `<YUVBMP>` / `.YBM` 8-bit indexed palette images to RGBA canvas textures, with high-precision chroma subsampling and Alpha channel transparency blending
-* **VCDSCRIPT Interpreter & Virtual Machine**: Built-in AST parser and coroutine virtual machine (VM) supporting arithmetic expressions, conditional branches (`IF...THEN...ELSE`), subroutines (`GOSUB`), pseudo-random generation (`CALL RAND`), key waiting (`CALL IRKEY`), and animation timing delays
-* **Multimedia Audio/Video & Karaoke Engine**: Seamless playback scheduling for MPEG-1 video streams (`.DAT`), looping background music (`BGSOUND`), instant button sound effects (`.WAV`), and full support for the interactive Karaoke playlist command set
+* Disc structure detection: automatically detects VCD 3.0 layout conventions, parsing `AUTORUN.CLS` and `ENREACH.CLS` configuration files to locate the startup page and intro sequence.
+* Interactive page parsing: parses `<COMPHTML>` / `.CHM` binary page files, including layer layouts, polygonal and rectangular clickable hotspots, navigation tables, and overlay compositing.
+* Palette image decoding: decodes `<YUVBMP>` / `.YBM` 8-bit indexed images into RGBA textures with chroma subsampling and alpha blending.
+* VCDSCRIPT engine: includes an AST parser and coroutine virtual machine supporting arithmetic expressions, conditional branches (`IF...THEN...ELSE`), subroutines (`GOSUB`), random numbers (`CALL RAND`), key wait operations (`CALL IRKEY`), and animation delays.
+* Audio and video: schedules MPEG-1 video playback (`.DAT`), looping background music (`BGSOUND`), WAV sound effects, and karaoke playlist commands.
 
-#### VCD 2.0 Support
-* **White Book PBC (Playback Control) State Machine**: Complete parsing and execution of `LOT.VCD` (Location Table) and `PSD.VCD` (Play Sequence Descriptor), supporting `PlayList`, `SelectionList`, and `EndList` interactive workflows
-* **Still & Motion Menus**: Support for `/SEGMENT/ITEMxxxx.DAT` high-resolution still picture menu frame decoding and standard MPEG-1 motion video menu playback
-* **Multi-function Remote & Keypad Navigation**: Multi-digit track/selection buffering with 2.0s timeout auto-confirmation, `Enter` confirmation, and precise physical track seeking; dedicated "PBC" button to return to root menus at any time
-* **Multi-Mode Adaptive Switching**: Distinguishes between VCD 2.0 Classic PBC interaction and VCD 1.0 Linear video playback, allowing seamless switching between modes
-* **Track & Timecode Indexing**: Accurate parsing of `ENTRIES.VCD` entry points, with track list timecodes formatted clearly as `MM:SS.FF`
+### VCD 2.0 Playback Control (PBC)
 
-### Interactive Runtime
+* PBC state machine: parses `LOT.VCD` (Location Table) and `PSD.VCD` (Play Sequence Descriptor) to handle `PlayList`, `SelectionList`, and `EndList` workflows.
+* Menus: decodes `/SEGMENT/ITEMxxxx.DAT` high-resolution still picture menu frames and plays standard MPEG-1 motion video menus.
+* Remote and keyboard input: buffers multi-digit track numbers with a 2.0-second auto-confirmation timeout or `Enter` confirmation, track seeking, and a dedicated PBC return button.
+* Playback modes: identifies and switches between VCD 3.0 interactive pages, VCD 2.0 PBC menus, and VCD 1.0 linear video playback.
+* Track indexing: parses `ENTRIES.VCD` entry points, displaying track list timecodes in `MM:SS.FF` format.
 
-* VCD 3.0 page rendering
-* Interactive button/hotspot regions
-* Embedded script execution
-* Keyboard and virtual remote-control input
-* Timers, navigation, and state management
-* Karaoke command support
+### Audio, Video, and Platform Architecture
 
-### Audio & Video
-
-* CD-XA demultiplexing
-* MPEG-1 video playback
-* Aspect-ratio correction (4:3)
-* Background music playback
-* WAV sound effects
-* Video/audio synchronization
-
-### Modern Runtime
-
-* Written entirely in modern safe Rust
-* Runs directly on modern 64-bit operating systems (Windows, macOS, Linux)
-* No Windows 9x environment required
-* No legacy player installation required
-* Designed to be cross-platform
+* Media synchronization: CD-XA sector demultiplexing, MPEG-1 playback with 4:3 aspect ratio correction, and PTS-based audio/video synchronization.
+* Modern cross-platform runtime: written in safe Rust with no legacy system dependencies, running natively on 64-bit Windows, macOS, and Linux.
 
 ---
 
-## 💾 Download Pre-built Binaries
+## Pre-built Binaries
 
-If you simply want to run the player without installing Rust or setting up a development environment, download the latest standalone pre-built binaries for your platform:
+Pre-compiled standalone archives are available on GitHub Releases:
 
-👉 **[Download from GitHub Releases](https://github.com/NimitzDEV/vcd30player/releases)**
+[Download from GitHub Releases](https://github.com/NimitzDEV/vcd30player/releases)
 
-* **Windows**: Download `vcd30player-v*-windows-x64.zip`, extract, and double-click `vcd30_player.exe`.
-* **Linux**: Download `vcd30player-v*-linux-x64.tar.gz`, extract, and run.
+* Windows: download `vcd30player-v*-windows-x64.zip`, extract, and launch `vcd30_player.exe`.
+* Linux: download `vcd30player-v*-linux-x64.tar.gz`, extract, and launch the binary.
 
 ---
 
-## 🛠️ Local Development & Building from Source
-
-If you wish to contribute to development, debug features, or build the player manually from source, follow the instructions below:
+## Local Development and Building
 
 ### Requirements
 
@@ -120,13 +90,13 @@ git submodule update --init --recursive
 
 ### Run
 
-Start the player GUI:
+Launch the graphical interface:
 
 ```bash
 cargo run --release
 ```
 
-Or specify a mounted disc / extracted VCD directory:
+Or pass a mounted disc letter or extracted VCD folder directly:
 
 ```bash
 cargo run --release -- "D:\"
@@ -134,22 +104,24 @@ cargo run --release -- "D:\"
 
 ---
 
-## 🧪 Testing
+## Testing
 
-The project includes unit and integration tests with a small self-contained test fixture, so all tests can run without a physical VCD.
+Run unit and integration tests using the built-in test fixtures (no physical disc required):
 
 ```bash
 cargo test
 ```
 
-To run extended tests against a real disc:
+To run integration tests against a mounted disc or local dump:
+
+Windows (PowerShell):
 
 ```powershell
 $env:VCD_TEST_DISC = "D:\"
 cargo test
 ```
 
-Linux/macOS:
+Linux / macOS:
 
 ```bash
 VCD_TEST_DISC="/media/cdrom" cargo test
@@ -157,13 +129,11 @@ VCD_TEST_DISC="/media/cdrom" cargo test
 
 ---
 
-## 🔬 Format Analysis & Architecture
+## Format Architecture
 
-This project started from the investigation of a real VCD 3.0 disc whose original player software no longer works on modern systems.
+The project originated from a VCD 3.0 disc whose bundled player no longer functions on modern operating systems. Instead of hosting legacy system runtimes, vcd30player directly parses the on-disc data formats and executes their presentation semantics in native code.
 
-The project is progressively replacing the original legacy runtime with modern, documented implementations of the underlying formats and execution environment.
-
-Target formats and pipeline:
+Data flow and format architecture:
 
 ```text
 VCD 3.0 disc
@@ -178,29 +148,27 @@ VCD 3.0 disc
       Modern VCD 3.0 Runtime
 ```
 
-The long-term goal is not to reproduce the original Windows environment, but to **reimplement the semantics required to run VCD 3.0 content directly**.
-
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```text
 vcd30player/
 ├── .github/
-│   ├── ISSUE_TEMPLATE/    # Bug report and feature request templates
+│   ├── ISSUE_TEMPLATE/    # Issue templates
 │   ├── workflows/
-│   │   ├── ci.yml         # Automated continuous integration and test
-│   │   └── release.yml    # Automated multi-platform release binary packaging
+│   │   ├── ci.yml         # CI and test workflow
+│   │   └── release.yml    # Multi-platform release workflow
 │   └── PULL_REQUEST_TEMPLATE.md
 ├── src/
-│   ├── assets/            # CHM / YBM / CLS format handling
+│   ├── assets/            # CHM / YBM / CLS format decoders
 │   ├── audio/             # Audio playback and mixing
-│   ├── core/              # Runtime, scripts and application state
+│   ├── core/              # Runtime state machine, script AST, and VM
 │   ├── ui/                # egui interface and virtual remote
-│   └── video/             # CD-XA and MPEG playback
+│   └── video/             # CD-XA demuxer and MPEG playback
 ├── c_src/                 # C bridge for MPEG decoding
 ├── vendor/                # Git submodule (phoboslab/pl_mpeg)
-├── tests/                 # Unit/integration tests and fixtures
+├── tests/                 # Unit and integration tests with fixtures
 ├── Cargo.toml
 ├── CHANGELOG.md
 ├── CONTRIBUTING.md
@@ -212,34 +180,27 @@ vcd30player/
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
-VCD 3.0 is a largely undocumented and poorly preserved multimedia format. If you have:
+Public documentation on VCD 3.0 is sparse. Contributions in the following areas are welcome:
 
-* VCD 3.0 discs
-* Original VCD 3.0 player software
-* Documentation or specifications
-* Format analysis findings
-* Format samples
-* Compatibility information
+* Compatibility reports and sample disc feedback
+* Technical documentation and format findings
+* Bug reports and pull requests
 
-they can be extremely useful for the project.
-
-Issues, pull requests, format research, and compatibility reports are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before submitting contributions.
+Please review [CONTRIBUTING.md](CONTRIBUTING.md) before submitting contributions.
 
 ---
 
-## ⚠️ Disclaimer
+## Disclaimer
 
-This project does **not** distribute commercial VCD content, copyrighted media, or original commercial discs.
-
-Use the player with discs or backups that you have the legal right to use.
+This project does not distribute copyrighted media or commercial disc images. Use the player only with discs or backups you have the legal right to access.
 
 ---
 
-## 📜 License
+## License
 
-Licensed under either of:
+Dual-licensed under either:
 
 * [MIT License](LICENSE-MIT)
 * [Apache License, Version 2.0](LICENSE-APACHE)

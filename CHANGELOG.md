@@ -12,65 +12,67 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   - Full binary parser for `VCD/LOT.VCD` (Location Table) and `VCD/PSD.VCD` (Play Sequence Descriptor), supporting `PlayList`, `SelectionList`, and `EndList` structures according to the White Book standard.
   - Event-driven PBC state machine supporting multi-level menus, track chains, wait delays, and automatic timeout transitions.
   - High-resolution still picture menu support (`/SEGMENT/ITEMxxxx.DAT` demuxing, decoding, and canvas rendering).
-  - MPEG-1 motion video menu support with smooth interactive playback.
-  - Dedicated "PBC" root menu toggle button in the bottom control bar to jump back to primary selection menus at any time.
+  - MPEG-1 motion video menu playback.
+  - Dedicated "PBC" root menu button in the bottom control bar to return to selection menus.
 - **Multi-Mode Adaptive Disc Architecture**:
-  - Automatic detection and seamless switching between VCD 3.0 Interactive mode, VCD 2.0 Classic PBC mode, and VCD 1.0 Linear video playback.
-  - Independent lifecycle management and clean state rebuild when switching modes.
+  - Automatic detection and switching between VCD 3.0 Interactive mode, VCD 2.0 Classic PBC mode, and VCD 1.0 Linear video playback.
+  - Independent lifecycle management when switching modes.
 - **Multi-Digit Numeric Keypad Buffering**:
-  - Smart numeric key buffering for remote control and keyboard input (buffers single digits if tracks/selections > 9, waits for `Enter`, second digit, or 2.0s auto-confirm timeout).
+  - Numeric key buffering for remote control and keyboard navigation (buffers single digits if track count exceeds 9, waiting for `Enter`, a second digit, or a 2.0-second auto-confirm timeout).
   - Real-time status bar feedback during digit entry (e.g. `输入曲目: 1 (按 Enter 确认或等待)`).
-  - Numeric track jumping support in VCD 1.0 Linear mode.
+  - Direct numeric track selection in VCD 1.0 Linear mode.
 
 ### Fixed
 - **Track Playback Numeric Keypad Intro Video Jump**:
-  - Resolved an issue in VCD 2.0 mode where entering a track number (such as `1`) during playback incorrectly jumped to the opening intro video (LID 1) via LOT lookup instead of the actual physical track. Now correctly resolves matching PSD descriptors and preserves PBC return semantics.
+  - Resolved an issue in VCD 2.0 mode where entering a track number (such as `1`) during playback incorrectly jumped to the opening intro video (LID 1) via LOT lookup instead of the physical track. Now resolves matching PSD descriptors and preserves PBC return semantics.
 - **Track List Timecode Separator**:
-  - Formatted track list timecode separator between seconds and frames/milliseconds as a dot `.` instead of a colon `:` (e.g. `[05:02.70]`), preventing confusion with HH:MM:SS format.
+  - Formatted track list timecode separator between seconds and frames/milliseconds as a dot `.` instead of a colon `:` (e.g. `[05:02.70]`), avoiding confusion with HH:MM:SS format.
 - **PBC Menu State Lingering**:
   - Cleared lingering PBC menu titles from the window title bar and status bar upon navigating into track video playback.
 - **Home Button Activation Guard**:
   - Disabled home button click activation when running outside of VCD 3.0 Interactive mode.
 - **Drawer Close Button Glyph**:
-  - Replaced drawer close glyph with high-compatibility symbols to prevent rectangle tofu glyph rendering on non-standard font systems.
+  - Replaced drawer close glyph with high-compatibility symbols to prevent missing glyph rendering on non-standard font systems.
 
 ### Changed
 - **Side Panel Expansion Window Sizing**:
   - Automatically expands window width when opening the side panel drawer and restores width when closing, preventing canvas aspect ratio compression.
-- **Bottom Control Bar Layout Refinements**:
+- **Bottom Control Bar Layout**:
   - Moved playback mode switcher after the audio channel selector.
-  - Compacted audio channel, playback order, and about buttons to clean icon controls with refined margins.
-  - Standardized the reset button behavior to restart the current active mode from the beginning.
+  - Compacted audio channel, playback order, and about buttons into icon controls.
+  - Reset button now restarts the current active mode from the beginning.
+- **Documentation**:
+  - Streamlined Chinese and English README documentation, removing duplicate feature listings and promotional phrasing.
 
 ## [0.1.6] - 2026-09-10
 
 ### Added
 - **Custom Window Title Bar**:
-  - Custom borderless window title bar rendered with egui, matching standard single toolbar height (`26.0px`).
+  - Borderless window title bar rendered with egui, matching standard toolbar height (`26.0px`).
   - Centered window title, responsive middle drag area, and double-click window maximize/restore toggle.
-  - Crisp vector-drawn window control buttons (minimize, maximize/restore, close with hover highlight) to guarantee sharp rendering across high-DPI displays without font glyph dependencies.
-  - Full 8-direction window edge and corner resizing handles with borderless viewport commands.
-  - Subtle 1px outer frame border stroke for borderless window mode.
+  - Vector-drawn window control buttons (minimize, maximize/restore, close with hover highlight) for high-DPI displays without font glyph dependencies.
+  - 8-direction window edge and corner resizing handles with borderless viewport commands.
+  - 1px outer frame border stroke for borderless window mode.
 - **Unified Status Space**:
-  - Unified status zone dynamically showing idle guide text, active page and video stream metadata, 2-second transient action messages, and interactive cyan hover target indicators.
+  - Unified status zone showing idle guide text, active page and video stream metadata, 2-second transient action messages, and hover target indicators.
 
 ### Changed
 - **Bottom Toolbar Layout & Player Controls**:
-  - Reorganized the bottom panel into two functional rows: Row 1 dedicated to disc management and persistent video playback controls, Row 2 dedicated to navigation, debug toggles, and status information.
-  - Playback buttons updated to clean icon-only controls (`▶`/`⏸`, `⏹`) with hover tooltips and keyboard shortcuts (`Space`, `ESC`).
+  - Reorganized the bottom panel into two functional rows: Row 1 for disc management and video playback controls, Row 2 for navigation, debug toggles, and status information.
+  - Updated playback buttons to icon-only controls (`▶`/`⏸`, `⏹`) with tooltips and keyboard shortcuts (`Space`, `ESC`).
   - Expanded video seek slider to fill remaining width with elapsed/total duration displayed at the right.
-  - Balanced vertical panel margins and separator gaps to a uniform `6.0px`.
-  - Unified horizontal spacing between toolbar elements and vertical separators to `8.0px`.
+  - Set vertical panel margins and separator gaps to `6.0px`.
+  - Set horizontal spacing between toolbar elements and vertical separators to `8.0px`.
 
 ### Fixed
 - **Interactive Script Animation Display Delay**:
-  - Implemented the standard 300ms display delay on `DRAWIMAGE` statements in the script virtual machine, enabling multi-frame interactive animations (e.g. target hit sequences, star score tallying) to render smoothly and synchronize with audio effects.
-  - Suppressed hotspot mouse hover and click interactions while the script virtual machine is actively executing delays or animations to prevent interrupting playback.
-  - Optimized GUI canvas texture refresh to update in-place without redundant GPU texture handle reallocations.
+  - Implemented 300ms display delay on `DRAWIMAGE` statements in the script virtual machine to pace multi-frame animations (such as target hit sequences and score tallying) with audio effects.
+  - Suppressed hotspot hover and click interactions while the script virtual machine is actively executing delays or animations.
+  - Canvas texture refresh updates in-place without redundant GPU texture handle reallocations.
 - **Hover Target Cleanup**:
   - Cleared active hotspot hover indicators immediately upon clicking DAT video targets and during active video playback.
 - **Audio Initialization in Headless Environments**:
-  - Automatically bypass native audio driver initialization when running under headless CI environments (`CI=true` / `GITHUB_ACTIONS=true`) to prevent `0xc0000005` access violation crashes.
+  - Bypassed native audio driver initialization when running under headless CI environments (`CI=true` / `GITHUB_ACTIONS=true`) to avoid access violation crashes.
 
 ---
 
@@ -78,7 +80,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 - **Composite Page Overlay Images**:
-  - Support parsing and compositing sub-images onto the base canvas for composite CHM pages (e.g. answer key overlay patch images `AS011_*.YBM` on exercise pages).
+  - Support parsing and compositing sub-images onto the base canvas for composite CHM pages (such as answer key overlay patch images `AS011_*.YBM` on exercise pages).
   - Preserved underlying background and base page hotspots when overlay documents have no conflicting click targets.
   - Automatic overlay state cleanup upon page navigation.
 - **NTSC Video Stream Support**:
@@ -88,7 +90,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Underline Hotspot Hit-Testing**:
   - Added upward click tolerance for thin underline hotspots (e.g. fill-in-the-blank questions in exercise pages), allowing clicks in the blank space directly above the underline to register properly.
 - **Video Playback Concurrency & ESC Handling**:
-  - Resolved lock contention and deadlock when pressing the Escape key during active video playback, ensuring instant return to the preceding CHM page.
+  - Resolved lock contention when pressing the Escape key during active video playback, ensuring return to the preceding CHM page.
 
 ---
 
@@ -97,21 +99,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 - **Dynamic Variable Text & Score Displays (Chunk 14 `TEXT`)**:
   - Support parsing and rendering Chunk 14 dynamic variable text overlays directly onto the canvas.
-  - Real-time variable formatting and score counter displays (e.g. tracking `i_e` scores in interactive game pages `GAME051` and `SCORE05X`).
+  - Variable formatting and score counter displays (such as tracking `i_e` scores in interactive game pages `GAME051` and `SCORE05X`).
 - **Hotspot Micro-Scripts (Chunk 13 `MICRO`)**:
-  - Support executing inline micro-scripts embedded directly inside hotspot records (e.g. variable assignments and arithmetic like `i_e=i_e+2`).
+  - Support executing inline micro-scripts embedded directly inside hotspot records (such as variable assignments and arithmetic like `i_e=i_e+2`).
 
 ### Fixed
 - **Conditional Opening Video Playback**:
-  - Made opening video playback strictly conditional on the presence of `PlayMpeg` symbols or explicit `.DAT` paths in `AUTORUN.CLS`, preventing unwanted playback of warning/audio tracks on discs without opening videos.
+  - Made opening video playback conditional on the presence of `PlayMpeg` symbols or explicit `.DAT` paths in `AUTORUN.CLS`, avoiding unwanted playback on discs without opening videos.
 - **CHM Buffer & Comment Parsing**:
   - Read length-prefixed image filenames at offset `0x60` in CHM Chunk 3 to prevent dirty buffer data corruption.
   - Preserved colons inside `REM` and `'` comment statements during script instruction splitting.
   - Prevented automatic navigation on finished asynchronous background scripts so interactive pages remain open.
 
 ### Changed
-- Collapsed virtual remote control panel by default on startup for a cleaner viewing experience.
-- Refreshed project documentation with pre-built binary installation instructions and development guides.
+- Collapsed virtual remote control panel by default on startup.
+- Updated project documentation with pre-built binary installation instructions and development guides.
 
 ---
 
@@ -131,15 +133,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   - C bridge integration with `pl_mpeg` for MPEG-1 video frame decoding and MPEG-1 Layer II audio decoding.
   - Timestamp-based (PTS) audio/video synchronization, playback control (play/pause), and seek functionality.
   - Background audio loop playback (`BGSOUND`) and on-demand button sound effects (`.WAV`).
-- **Modern User Interface**:
+- **User Interface**:
   - Cross-platform graphical user interface built with `egui` and `eframe`, supporting DPI scaling and aspect-ratio-preserving rendering.
   - Interactive hotspot visual highlighting and mouse hover/click interaction.
   - Floating video control overlay with play/pause, seek slider, and elapsed/total time display.
   - Collapsible virtual remote control panel supporting physical keyboard shortcuts and simulated remote key codes.
   - Disc folder picker and empty-disc placeholder screen.
 - **Testing & Continuous Integration**:
-  - Self-contained, copyright-clean mock disc fixtures (`tests/fixtures/mock_disc`) allowing 100% of test suites to run offline without physical disc drives.
-  - Comprehensive test suite covering 47 unit and integration tests across format parsing, VM execution, audio mixing, and video playback.
+  - Self-contained mock disc fixtures (`tests/fixtures/mock_disc`) allowing test suites to run offline without physical disc drives.
+  - Test suite covering unit and integration tests across format parsing, VM execution, audio mixing, and video playback.
   - GitHub Actions CI workflow supporting automated check, test, and clippy runs on Windows and Ubuntu.
 
 [Unreleased]: https://github.com/NimitzDEV/vcd30player/compare/v0.1.6...HEAD

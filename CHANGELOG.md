@@ -7,6 +7,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-12
+
+### Added
+- **Application Version Check & In-Place Self-Update**:
+  - Lightweight version checking and distribution via Cloudflare R2 / S3-compatible storage and edge CDN.
+  - Integrated update status row and trigger button in the "About" dialog, maintaining zero network overhead on startup.
+  - Bilingual changelog modal window with auto-detection of system locale (Chinese/English).
+  - Background streaming download with real-time percentage/MB progress bar and cancellation support.
+  - SHA-256 checksum integrity verification prior to applying updates.
+  - Atomic in-place binary self-replacement and seamless restart using `self-replace`.
+- **CI Release Automation**:
+  - Automated artifact archiving, bilingual changelog extraction, and generation of `version.json` and `checksums.txt`.
+  - Dual distribution to both Cloudflare R2 storage and GitHub Releases.
+
 ## [0.2.0] - 2026-09-11
 
 ### Added

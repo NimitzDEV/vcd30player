@@ -293,11 +293,12 @@ pub fn show_update_details_dialog(
         .collapsible(false)
         .resizable(false)
         .default_width(480.0)
-        .min_width(450.0)
-        .max_width(520.0)
+        .min_width(480.0)
+        .max_width(480.0)
         .default_height(360.0)
         .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
         .show(ctx, |ui| {
+            ui.set_max_width(480.0);
             ui.add_space(4.0);
 
             // Version info banner
@@ -494,26 +495,64 @@ pub fn show_update_details_dialog(
                 }
                 crate::updater::DownloadState::Failed(err)
                 | crate::updater::DownloadState::InstallFailed(err) => {
+                    let is_install =
+                        matches!(download_state, crate::updater::DownloadState::InstallFailed(_));
                     ui.horizontal(|ui| {
+                        let label_text = if is_install {
+                            "❌ 更新安装失败"
+                        } else {
+                            "❌ 下载更新失败"
+                        };
                         ui.label(
-                            RichText::new(format!("❌ {}", err))
+                            RichText::new(label_text)
                                 .color(Color32::from_rgb(255, 100, 100))
-                                .size(12.0),
+                                .strong(),
                         );
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let btn_text = if is_install {
+                                "重试更新"
+                            } else {
+                                "重试下载"
+                            };
                             if ui
                                 .add(
-                                    egui::Button::new("重试下载")
+                                    egui::Button::new(btn_text)
                                         .fill(Color32::from_rgb(200, 120, 40))
                                         .min_size(Vec2::new(80.0, 24.0)),
                                 )
                                 .clicked()
                             {
-                                start_download = true;
+                                if is_install {
+                                    apply_update = true;
+                                } else {
+                                    start_download = true;
+                                }
                             }
                         });
                     });
+
+                    ui.add_space(4.0);
+
+                    // Render error detail in a dedicated, wrapped and width-constrained box
+                    let max_w = ui.available_width();
+                    egui::Frame::new()
+                        .fill(Color32::from_rgba_premultiplied(45, 20, 20, 180))
+                        .stroke(egui::Stroke::new(1.0, Color32::from_rgb(120, 40, 40)))
+                        .corner_radius(4)
+                        .inner_margin(egui::Margin::symmetric(8, 6))
+                        .show(ui, |ui| {
+                            ui.set_max_width(max_w - 16.0);
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(err)
+                                        .color(Color32::from_rgb(255, 140, 140))
+                                        .size(11.5),
+                                )
+                                .wrap(),
+                            )
+                            .on_hover_text(err);
+                        });
                 }
             }
 

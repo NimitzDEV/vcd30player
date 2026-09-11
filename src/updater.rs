@@ -350,9 +350,31 @@ impl UpdateManager {
         let computed_hash = format!("{:x}", hasher.finalize());
         if !computed_hash.eq_ignore_ascii_case(&asset.sha256) {
             let _ = std::fs::remove_file(&temp_path);
-            return Err(format!(
-                "SHA-256 完整性校验失败！期望值: {}, 实际值: {}",
+            eprintln!(
+                "[updater] SHA-256 完整性校验失败！期望值: {}, 实际值: {}",
                 asset.sha256, computed_hash
+            );
+            let exp_short = if asset.sha256.len() >= 16 {
+                format!(
+                    "{}...{}",
+                    &asset.sha256[..8],
+                    &asset.sha256[asset.sha256.len().saturating_sub(6)..]
+                )
+            } else {
+                asset.sha256.clone()
+            };
+            let act_short = if computed_hash.len() >= 16 {
+                format!(
+                    "{}...{}",
+                    &computed_hash[..8],
+                    &computed_hash[computed_hash.len().saturating_sub(6)..]
+                )
+            } else {
+                computed_hash.clone()
+            };
+            return Err(format!(
+                "SHA-256 完整性校验失败 (期望: {}, 实际: {})",
+                exp_short, act_short
             ));
         }
 

@@ -96,6 +96,32 @@ pub fn is_newer_version(remote: &str, current: &str) -> bool {
     false
 }
 
+/// Formats raw release timestamp (e.g. ISO 8601) into clean "YYYY-MM-DD HH:MM:SS"
+pub fn format_release_date(raw: &str) -> String {
+    let s = raw.trim();
+    if s.is_empty() || s == "未知" {
+        return "未知".to_string();
+    }
+
+    if let Some((date_part, time_remainder)) = s.split_once('T').or_else(|| s.split_once(' ')) {
+        let time_clean = time_remainder
+            .split(['+', '-', 'Z'])
+            .next()
+            .unwrap_or("")
+            .split('.')
+            .next()
+            .unwrap_or("")
+            .trim();
+        if !time_clean.is_empty() {
+            format!("{} {}", date_part.trim(), time_clean)
+        } else {
+            date_part.trim().to_string()
+        }
+    } else {
+        s.to_string()
+    }
+}
+
 /// Status of update checking
 #[derive(Debug, Clone)]
 pub enum UpdateCheckStatus {
@@ -583,5 +609,24 @@ mod tests {
         assert_eq!(key, "windows-x64");
         #[cfg(target_os = "linux")]
         assert_eq!(key, "linux-x64");
+    }
+
+    #[test]
+    fn test_format_release_date() {
+        assert_eq!(
+            format_release_date("2026-09-12T03:04:39.123456+00:00"),
+            "2026-09-12 03:04:39"
+        );
+        assert_eq!(
+            format_release_date("2026-09-12T03:04:39Z"),
+            "2026-09-12 03:04:39"
+        );
+        assert_eq!(
+            format_release_date("2026-09-12 03:04:39"),
+            "2026-09-12 03:04:39"
+        );
+        assert_eq!(format_release_date("2026-09-12"), "2026-09-12");
+        assert_eq!(format_release_date(""), "未知");
+        assert_eq!(format_release_date("未知"), "未知");
     }
 }

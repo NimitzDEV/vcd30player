@@ -291,8 +291,10 @@ pub fn show_update_details_dialog(
     egui::Window::new(format!("🚀 软件更新 - v{}", info.version))
         .open(&mut is_open)
         .collapsible(false)
-        .resizable(true)
+        .resizable(false)
         .default_width(480.0)
+        .min_width(450.0)
+        .max_width(520.0)
         .default_height(360.0)
         .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
         .show(ctx, |ui| {
@@ -308,7 +310,8 @@ pub fn show_update_details_dialog(
                             .strong()
                             .color(Color32::WHITE),
                     );
-                    let date_str = info.release_date.as_deref().unwrap_or("未知");
+                    let raw_date = info.release_date.as_deref().unwrap_or("未知");
+                    let date_str = crate::updater::format_release_date(raw_date);
                     ui.label(
                         RichText::new(format!("发布日期: {}", date_str))
                             .size(12.0)
@@ -429,22 +432,28 @@ pub fn show_update_details_dialog(
                         let tot_mb = *total as f64 / 1_048_576.0;
                         let pct = frac * 100.0;
 
+                        // Place Cancel button on the right edge first so it doesn't push window width
+                        let cancel_clicked = ui
+                            .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.add(
+                                    egui::Button::new(RichText::new("取消").color(Color32::WHITE))
+                                        .fill(Color32::from_rgb(180, 40, 40))
+                                        .min_size(Vec2::new(60.0, 24.0)),
+                                )
+                                .clicked()
+                            })
+                            .inner;
+                        if cancel_clicked {
+                            cancel_download = true;
+                        }
+
+                        // ProgressBar takes strictly the remaining available space on the left
                         ui.add(
                             egui::ProgressBar::new(frac)
+                                .desired_width(ui.available_width().max(60.0))
                                 .text(format!("{:.1}% ({:.1} MB / {:.1} MB)", pct, dl_mb, tot_mb))
                                 .animate(true),
                         );
-
-                        if ui
-                            .add(
-                                egui::Button::new(RichText::new("取消").color(Color32::WHITE))
-                                    .fill(Color32::from_rgb(180, 40, 40))
-                                    .min_size(Vec2::new(60.0, 24.0)),
-                            )
-                            .clicked()
-                        {
-                            cancel_download = true;
-                        }
                     });
                 }
                 crate::updater::DownloadState::Downloaded { .. } => {

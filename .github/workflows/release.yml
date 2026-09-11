@@ -166,7 +166,7 @@ jobs:
           vdata = {
               'version': ver,
               'tag': tag,
-              'release_date': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              'release_date': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S'),
               'changelog': {
                   'zh': cn_notes,
                   'en': en_notes

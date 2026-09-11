@@ -7,6 +7,8 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-11
+
 ### 新增 (Added)
 - **VCD 2.0 PBC (Playback Control) 状态机**:
   - 解析 `VCD/LOT.VCD`（位置查找表）与 `VCD/PSD.VCD`（播放序列描述表），支持白皮书规范中的 `PlayList`、`SelectionList` 与 `EndList` 结构。
@@ -144,7 +146,8 @@
   - 测试用例覆盖格式解析、脚本虚拟机、音频与视频播放。
   - 配置 GitHub Actions 工作流，支持 Windows 与 Ubuntu 自动化测试。
 
-[Unreleased]: https://github.com/NimitzDEV/vcd30player/compare/v0.1.6...HEAD
+[Unreleased]: https://github.com/NimitzDEV/vcd30player/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/NimitzDEV/vcd30player/compare/v0.1.6...v0.2.0
 [0.1.6]: https://github.com/NimitzDEV/vcd30player/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/NimitzDEV/vcd30player/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/NimitzDEV/vcd30player/compare/v0.1.0...v0.1.4

@@ -7,6 +7,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-12
+
+### Fixed
+- **Update Details Window Sizing & Layout**:
+  - Resolved an issue where horizontal layout feedback between the progress bar and cancel button caused window width expansion during download.
+  - Constrained update details window with min/max bounds and fixed sizing.
+- **Release Date Formatting**:
+  - Formatted release timestamps to clean "YYYY-MM-DD HH:MM:SS" format across platforms.
+
 ## [0.3.0] - 2026-09-12
 
 ### Added

@@ -432,28 +432,28 @@ pub fn show_update_details_dialog(
                         let tot_mb = *total as f64 / 1_048_576.0;
                         let pct = frac * 100.0;
 
-                        // Place Cancel button on the right edge first so it doesn't push window width
-                        let cancel_clicked = ui
-                            .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                ui.add(
-                                    egui::Button::new(RichText::new("取消").color(Color32::WHITE))
-                                        .fill(Color32::from_rgb(180, 40, 40))
-                                        .min_size(Vec2::new(60.0, 24.0)),
-                                )
-                                .clicked()
-                            })
-                            .inner;
-                        if cancel_clicked {
-                            cancel_download = true;
-                        }
+                        let btn_width = 65.0;
+                        let spacing = ui.spacing().item_spacing.x;
+                        let bar_width = (ui.available_width() - btn_width - spacing).max(100.0);
 
-                        // ProgressBar takes strictly the remaining available space on the left
+                        // ProgressBar occupies full available width minus the button space
                         ui.add(
                             egui::ProgressBar::new(frac)
-                                .desired_width(ui.available_width().max(60.0))
+                                .desired_width(bar_width)
                                 .text(format!("{:.1}% ({:.1} MB / {:.1} MB)", pct, dl_mb, tot_mb))
                                 .animate(true),
                         );
+
+                        if ui
+                            .add(
+                                egui::Button::new(RichText::new("取消").color(Color32::WHITE))
+                                    .fill(Color32::from_rgb(180, 40, 40))
+                                    .min_size(Vec2::new(btn_width, 24.0)),
+                            )
+                            .clicked()
+                        {
+                            cancel_download = true;
+                        }
                     });
                 }
                 crate::updater::DownloadState::Downloaded { .. } => {

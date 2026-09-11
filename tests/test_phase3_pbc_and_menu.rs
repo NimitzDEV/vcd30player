@@ -10,8 +10,14 @@ use vcd30_player::vcd::{
     LotTable, PbcAction, PbcEngine, PbcState, PsdDescriptor, PsdTable,
 };
 
-/// Returns the path to the VCD 2.0 paradise reference disc if available.
+/// Returns the path to the VCD 2.0 paradise reference disc if explicitly configured via env var or exists locally.
 fn get_paradise_disc_root() -> Option<PathBuf> {
+    if let Some(val) = std::env::var_os("VCD_PARADISE_DISC") {
+        let p = PathBuf::from(val);
+        if p.exists() {
+            return Some(p);
+        }
+    }
     let candidate = Path::new(r"E:\iso-disk\paradise-vcd2.0");
     if candidate.exists() {
         Some(candidate.to_path_buf())
@@ -299,7 +305,9 @@ fn test_paradise_vcd20_disc_metadata_and_pbc_execution() {
 
 #[test]
 fn test_live_disc_h_vcd20_mode_still_picture_menu() {
-    let disc_root = Path::new("H:/");
+    let disc_root = std::env::var_os("VCD_TEST_DISC")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("H:/"));
     if !disc_root.exists() || !disc_root.join("VCD").join("PSD.VCD").exists() {
         println!("Skipping H: disc test: drive not mounted or not VCD");
         return;
@@ -372,7 +380,10 @@ fn test_vcd20_disc_mode_switching_between_vcd20_and_vcd10() {
             .expect("restore VCD 2.0 mode");
         assert_eq!(kernel.active_mode, ActiveDiscMode::Vcd20Classic);
         assert!(kernel.pbc.is_some());
-    } else {
+    }
+
+    // Always run the mock disc test to ensure CI test coverage
+    {
         let tmp = std::env::temp_dir().join(format!(
             "mock_vcd20_{}",
             std::time::SystemTime::now()
@@ -393,7 +404,9 @@ fn test_vcd20_disc_mode_switching_between_vcd20_and_vcd10() {
         info_bytes[11] = 2;
         info_bytes[12] = 0;
         info_bytes[13] = 1;
-        info_bytes[20] = 1; // has_pbc
+        info_bytes[44..48].copy_from_slice(&32u32.to_be_bytes()); // psd_size = 32
+        info_bytes[51] = 8; // offset_mult = 8
+        info_bytes[52..54].copy_from_slice(&1u16.to_be_bytes()); // lot_entries = 1
         std::fs::write(vcd_dir.join("INFO.VCD"), &info_bytes).unwrap();
 
         let mut entries_bytes = vec![0u8; 2048];

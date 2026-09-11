@@ -198,7 +198,9 @@ pub fn detect_disc(disc_root: &Path) -> VcdDiscType {
         }
 
         if info.version == 2 {
-            if info.has_pbc() {
+            let has_pbc_files = find_path_ci(disc_root, &["VCD", "PSD.VCD"]).is_some()
+                && find_path_ci(disc_root, &["VCD", "LOT.VCD"]).is_some();
+            if info.has_pbc() || has_pbc_files {
                 return VcdDiscType::Vcd20WithPbc {
                     entry_count,
                     segment_count: info.item_count as usize,

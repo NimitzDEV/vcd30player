@@ -74,7 +74,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    name: Publish GitHub Release
+    name: Publish Release & Distribute to Cloudflare R2
     needs: build
     runs-on: ubuntu-latest
     steps:
@@ -87,15 +87,52 @@ jobs:
           path: release-assets
           merge-multiple: true
 
-      - name: Extract Bilingual Release Notes
+      - name: Generate Release Notes, Checksums, and version.json
         shell: bash
+        env:
+          PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL || 'https://content.vcd30player.app.nimitz.io' }}
         run: |
           TAG="${GITHUB_REF_NAME}"
           python3 -c "
-          import sys, re
+          import os, sys, re, hashlib, json, datetime
 
           tag = sys.argv[1]
           ver = tag.lstrip('v')
+          public_url = sys.argv[2].rstrip('/')
+
+          assets_dir = 'release-assets'
+          platforms = {}
+          checksum_lines = []
+
+          for fname in sorted(os.listdir(assets_dir)):
+              fpath = os.path.join(assets_dir, fname)
+              if not os.path.isfile(fpath):
+                  continue
+              h = hashlib.sha256()
+              with open(fpath, 'rb') as f:
+                  while chunk := f.read(65536):
+                      h.update(chunk)
+              sha256 = h.hexdigest()
+              size = os.path.getsize(fpath)
+              checksum_lines.append(f'{sha256}  {fname}\n')
+
+              if 'windows-x64' in fname:
+                  plat_key = 'windows-x64'
+              elif 'linux-x64' in fname:
+                  plat_key = 'linux-x64'
+              else:
+                  plat_key = fname
+
+              platforms[plat_key] = {
+                  'filename': fname,
+                  'url': f'{public_url}/{tag}/{fname}',
+                  'sha256': sha256,
+                  'size': size
+              }
+
+          # Write checksums.txt into release-assets
+          with open(os.path.join(assets_dir, 'checksums.txt'), 'w', encoding='utf-8') as f:
+              f.writelines(checksum_lines)
 
           def extract_section(file_path, version):
               try:
@@ -125,12 +162,73 @@ jobs:
           final_body = '\n\n---\n\n'.join(release_body)
           with open('RELEASE_NOTES.md', 'w', encoding='utf-8') as f:
               f.write(final_body + '\n')
-          " "$TAG"
+
+          vdata = {
+              'version': ver,
+              'tag': tag,
+              'release_date': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              'changelog': {
+                  'zh': cn_notes,
+                  'en': en_notes
+              },
+              'platforms': platforms
+          }
+          with open('version.json', 'w', encoding='utf-8') as f:
+              json.dump(vdata, f, ensure_ascii=False, indent=2)
+          " "$TAG" "$PUBLIC_URL"
+
+      - name: Check Cloudflare R2 Secrets
+        id: check-r2
+        env:
+          R2_ENDPOINT: ${{ secrets.R2_S3_ENDPOINT || secrets.R2_ENDPOINT || secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+        run: |
+          if [ -n "$R2_ENDPOINT" ] && [ -n "$R2_ACCESS_KEY_ID" ] && [ -n "$R2_SECRET_ACCESS_KEY" ] && [ -n "$R2_BUCKET_NAME" ]; then
+            echo "configured=true" >> $GITHUB_OUTPUT
+          else
+            echo "configured=false" >> $GITHUB_OUTPUT
+            echo "::warning::Cloudflare R2 secrets are not fully configured (R2_S3_ENDPOINT/R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME). Skipping R2 distribution."
+          fi
+
+      - name: Distribute to Cloudflare R2
+        if: steps.check-r2.outputs.configured == 'true'
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_RAW_ENDPOINT: ${{ secrets.R2_S3_ENDPOINT || secrets.R2_ENDPOINT || secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+        run: |
+          # If user passed full URL (e.g. https://xxx.r2.cloudflarestorage.com), use it directly;
+          # otherwise construct it from the Account ID.
+          if [[ "$R2_RAW_ENDPOINT" =~ ^https?:// ]]; then
+            ENDPOINT="${R2_RAW_ENDPOINT%/}"
+          else
+            ENDPOINT="https://${R2_RAW_ENDPOINT}.r2.cloudflarestorage.com"
+          fi
+
+          TAG="${GITHUB_REF_NAME}"
+
+          echo "Using S3 Endpoint: $ENDPOINT"
+          echo "Uploading release assets to Cloudflare R2: s3://${R2_BUCKET_NAME}/${TAG}/ ..."
+          aws s3 cp release-assets/ "s3://${R2_BUCKET_NAME}/${TAG}/" \
+            --recursive \
+            --endpoint-url "$ENDPOINT" \
+            --cache-control "public, max-age=31536000, immutable"
+
+          echo "Uploading version.json to Cloudflare R2: s3://${R2_BUCKET_NAME}/version.json ..."
+          aws s3 cp version.json "s3://${R2_BUCKET_NAME}/version.json" \
+            --endpoint-url "$ENDPOINT" \
+            --cache-control "public, max-age=60, s-maxage=60, no-cache"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: release-assets/*
+          files: |
+            release-assets/*
+            version.json
           body_path: RELEASE_NOTES.md
           draft: false
           prerelease: false

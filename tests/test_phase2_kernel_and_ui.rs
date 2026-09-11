@@ -220,8 +220,20 @@ fn test_ui_about_dialog_state() {
     let kernel = VcdKernel::new();
     let mut app = vcd30_player::ui::app::VcdPlayerApp::from_kernel(kernel);
     assert!(!app.show_about, "About dialog must be initially closed");
+    // Verify requirement: updater is Idle on startup, never auto-checking
+    assert!(
+        matches!(app.updater.check_status, vcd30_player::updater::UpdateCheckStatus::Idle),
+        "App startup must not automatically check for updates"
+    );
     app.show_about = true;
     assert!(app.show_about, "About dialog state must be toggleable");
+
+    // When on_about_opened is called, it triggers update check
+    app.updater.on_about_opened();
+    assert!(
+        matches!(app.updater.check_status, vcd30_player::updater::UpdateCheckStatus::Checking),
+        "Update check should be triggered when opening About dialog"
+    );
 }
 
 #[test]

@@ -21,6 +21,7 @@ pub struct VcdPlayerApp {
     pub show_metadata: bool,
     pub show_remote: bool,
     pub show_about: bool,
+    pub updater: crate::updater::UpdateManager,
     pub drawer_tab: DrawerTab,
     pub hovered_hotspot: Option<String>,
     pub status_message: String,
@@ -140,6 +141,7 @@ impl VcdPlayerApp {
             show_metadata: false,
             show_remote: false,
             show_about: false,
+            updater: crate::updater::UpdateManager::new(),
             drawer_tab: DrawerTab::Remote,
             hovered_hotspot: None,
             status_message: status,
@@ -162,6 +164,7 @@ impl VcdPlayerApp {
             show_metadata: false,
             show_remote: false,
             show_about: false,
+            updater: crate::updater::UpdateManager::new(),
             drawer_tab: DrawerTab::Remote,
             hovered_hotspot: None,
             status_message: String::new(),
@@ -403,6 +406,15 @@ impl VcdPlayerApp {
     /// Renders the VCD player UI into the given egui::Ui.
     pub fn show(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
+
+        // Poll updater background events
+        self.updater.poll();
+        if matches!(self.updater.check_status, crate::updater::UpdateCheckStatus::Checking)
+            || matches!(self.updater.download_state, crate::updater::DownloadState::Downloading { .. })
+            || matches!(self.updater.download_state, crate::updater::DownloadState::Installing)
+        {
+            ctx.request_repaint();
+        }
 
         // Check for numeric input buffer timeout (e.g. 2.0s without Enter)
         if let Ok(true) = self.kernel.check_pbc_digit_timeout() {
@@ -1080,7 +1092,13 @@ impl VcdPlayerApp {
 
         // Modal Dialog: About Window
         if self.show_about {
-            crate::ui::dialogs::show_about_dialog(&ctx, &mut self.show_about);
+            self.updater.on_about_opened();
+            crate::ui::dialogs::show_about_dialog(&ctx, &mut self.show_about, &mut self.updater);
+        }
+
+        // Modal Dialog: Update Details Window
+        if self.updater.show_details_window {
+            crate::ui::dialogs::show_update_details_dialog(&ctx, &mut self.updater);
         }
 
         // 5. Right Sidebar: Combined Remote Control & Track Drawer

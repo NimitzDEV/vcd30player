@@ -852,10 +852,11 @@ impl VcdPlayerApp {
                             ctx.request_repaint();
                         }
                     }
-                } else {
-                    let can_back = is_vcd30 && !self.kernel.history_stack.is_empty();
-                    let can_fwd = is_vcd30 && !self.kernel.forward_stack.is_empty();
-                    let can_home = is_vcd30;
+                    ui.add(egui::Separator::default().spacing(0.0));
+                } else if is_vcd30 {
+                    let can_back = !self.kernel.history_stack.is_empty();
+                    let can_fwd = !self.kernel.forward_stack.is_empty();
+                    let can_home = true;
 
                     if ui
                         .add_enabled(can_back, egui::Button::new("⏮ 后退"))
@@ -893,9 +894,8 @@ impl VcdPlayerApp {
                             ctx.request_repaint();
                         }
                     }
+                    ui.add(egui::Separator::default().spacing(0.0));
                 }
-
-                ui.add(egui::Separator::default().spacing(0.0));
 
                 // Requirement 3: 热区高亮和侧边面板开关放在最底部的工具条上，在 前进按钮的后面
                 ui.checkbox(&mut self.show_hotspots, "🎯 热区高亮");
@@ -1325,8 +1325,8 @@ impl VcdPlayerApp {
                     return;
                 }
 
-                // Preserve aspect ratio
-                let aspect = CANVAS_WIDTH as f32 / CANVAS_HEIGHT as f32;
+                // Preserve 4:3 display aspect ratio (standard Video CD display aspect ratio)
+                let aspect = 4.0 / 3.0;
                 let mut disp_w = avail_size.x;
                 let mut disp_h = disp_w / aspect;
 

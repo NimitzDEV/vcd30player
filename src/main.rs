@@ -5,7 +5,7 @@ use vcd30_player::ui::app::VcdPlayerApp;
 fn main() -> eframe::Result<()> {
     let native_options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size(Vec2::new(880.0, 720.0))
+            .with_inner_size(Vec2::new(800.0, 687.0))
             .with_min_inner_size(Vec2::new(500.0, 420.0))
             .with_title("vcd30player")
             .with_decorations(false),

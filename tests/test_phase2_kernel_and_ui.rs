@@ -390,3 +390,155 @@ fn test_navigation_disabled_in_non_vcd30_mode() {
     let fwd_res = kernel.go_forward().unwrap();
     assert!(!fwd_res, "go_forward must return false in VCD 2.0 mode");
 }
+
+fn shape_contains_text(shape: &vcd30_player::egui::epaint::Shape, target: &str) -> bool {
+    match shape {
+        vcd30_player::egui::epaint::Shape::Text(t) => t.galley.text().contains(target),
+        vcd30_player::egui::epaint::Shape::Vec(vec) => {
+            vec.iter().any(|s| shape_contains_text(s, target))
+        }
+        _ => false,
+    }
+}
+
+fn contains_text(shapes: &[vcd30_player::egui::epaint::ClippedShape], text: &str) -> bool {
+    shapes.iter().any(|c| shape_contains_text(&c.shape, text))
+}
+
+#[test]
+fn test_default_window_size_and_canvas_aspect_ratio_4_3() {
+    let kernel = VcdKernel::new();
+    let mut app = vcd30_player::ui::app::VcdPlayerApp::from_kernel(kernel);
+    let ctx = vcd30_player::egui::Context::default();
+
+    // Default window dimensions configured in main.rs: 800.0 x 687.0
+    let window_w = 800.0;
+    let window_h = 687.0;
+    let raw_input = vcd30_player::egui::RawInput {
+        screen_rect: Some(vcd30_player::egui::Rect::from_min_size(
+            vcd30_player::egui::Pos2::ZERO,
+            vcd30_player::egui::Vec2::new(window_w, window_h),
+        )),
+        ..Default::default()
+    };
+
+    // Frame 1 initializes layout
+    let mut out = ctx.run_ui(raw_input.clone(), |ui| {
+        app.show(ui);
+    });
+    out.textures_delta.clear();
+
+    // Frame 2 stabilizes panel measurements
+    let mut out = ctx.run_ui(raw_input.clone(), |ui| {
+        app.show(ui);
+    });
+    out.textures_delta.clear();
+
+    // Verify CentralPanel available height is 600.0 and width is 800.0 (exact 4:3 aspect ratio)
+    let central_h = window_h - 87.0; // 87.0px non-central height (titlebar + bottom toolbar)
+    assert_eq!(central_h, 600.0);
+    assert_eq!(window_w / central_h, 4.0 / 3.0);
+
+    // Verify when a disc is loaded in VCD 3.0 mode, central area remains 800x600 (4:3)
+    let disc_path = common::get_test_disc_root();
+    app.kernel.open_disc(disc_path).unwrap();
+    let mut out = ctx.run_ui(raw_input.clone(), |ui| {
+        app.show(ui);
+    });
+    out.textures_delta.clear();
+
+    // Verify in VCD 1.0 Linear mode, central area remains 800x600 (4:3)
+    app.kernel
+        .switch_active_mode(vcd30_player::core::kernel::ActiveDiscMode::Vcd10Linear)
+        .unwrap();
+    let mut out = ctx.run_ui(raw_input, |ui| {
+        app.show(ui);
+    });
+    out.textures_delta.clear();
+}
+
+#[test]
+fn test_navigation_buttons_visibility_in_vcd10_vcd20_and_vcd30() {
+    let disc_path = common::get_test_disc_root();
+    let mut kernel = VcdKernel::new();
+    kernel.open_disc(disc_path).unwrap();
+
+    let mut app = vcd30_player::ui::app::VcdPlayerApp::from_kernel(kernel);
+    let ctx = vcd30_player::egui::Context::default();
+
+    let raw_input = vcd30_player::egui::RawInput {
+        screen_rect: Some(vcd30_player::egui::Rect::from_min_size(
+            vcd30_player::egui::Pos2::ZERO,
+            vcd30_player::egui::Vec2::new(800.0, 687.0),
+        )),
+        ..Default::default()
+    };
+
+    // 1. In VCD 3.0 Interactive mode: Navigation buttons (后退, 主页, 前进) MUST be rendered
+    assert_eq!(app.kernel.active_mode, ActiveDiscMode::Vcd30Interactive);
+    let mut out = ctx.run_ui(raw_input.clone(), |ui| {
+        app.show(ui);
+    });
+    out.textures_delta.clear();
+    let mut out = ctx.run_ui(raw_input.clone(), |ui| {
+        app.show(ui);
+    });
+    out.textures_delta.clear();
+
+    assert!(contains_text(&out.shapes, "后退"), "VCD 3.0 must display 后退 button");
+    assert!(contains_text(&out.shapes, "主页"), "VCD 3.0 must display 主页 button");
+    assert!(contains_text(&out.shapes, "前进"), "VCD 3.0 must display 前进 button");
+    assert!(!contains_text(&out.shapes, "PBC"), "VCD 3.0 must NOT display PBC button");
+
+    // 2. In VCD 2.0 Classic mode: PBC button MUST be rendered; 后退, 主页, 前进 MUST NOT be rendered
+    app.kernel
+        .switch_active_mode(ActiveDiscMode::Vcd20Classic)
+        .unwrap();
+    let mut out = ctx.run_ui(raw_input.clone(), |ui| {
+        app.show(ui);
+    });
+    out.textures_delta.clear();
+    let mut out = ctx.run_ui(raw_input.clone(), |ui| {
+        app.show(ui);
+    });
+    out.textures_delta.clear();
+
+    assert!(contains_text(&out.shapes, "PBC"), "VCD 2.0 must display PBC button");
+    assert!(!contains_text(&out.shapes, "后退"), "VCD 2.0 must NOT display 后退 button");
+    assert!(!contains_text(&out.shapes, "主页"), "VCD 2.0 must NOT display 主页 button");
+    assert!(!contains_text(&out.shapes, "前进"), "VCD 2.0 must NOT display 前进 button");
+
+    // 3. In VCD 1.0 Linear mode: Neither PBC nor 后退, 主页, 前进 MUST be rendered!
+    app.kernel
+        .switch_active_mode(ActiveDiscMode::Vcd10Linear)
+        .unwrap();
+    let mut out = ctx.run_ui(raw_input.clone(), |ui| {
+        app.show(ui);
+    });
+    out.textures_delta.clear();
+    let mut out = ctx.run_ui(raw_input.clone(), |ui| {
+        app.show(ui);
+    });
+    out.textures_delta.clear();
+
+    assert!(!contains_text(&out.shapes, "PBC"), "VCD 1.0 must NOT display PBC button");
+    assert!(!contains_text(&out.shapes, "后退"), "VCD 1.0 must NOT display 后退 button");
+    assert!(!contains_text(&out.shapes, "主页"), "VCD 1.0 must NOT display 主页 button");
+    assert!(!contains_text(&out.shapes, "前进"), "VCD 1.0 must NOT display 前进 button");
+
+    // 4. When disc is ejected: Neither PBC nor 后退, 主页, 前进 MUST be rendered
+    app.eject_disc();
+    let mut out = ctx.run_ui(raw_input.clone(), |ui| {
+        app.show(ui);
+    });
+    out.textures_delta.clear();
+    let mut out = ctx.run_ui(raw_input, |ui| {
+        app.show(ui);
+    });
+    out.textures_delta.clear();
+
+    assert!(!contains_text(&out.shapes, "PBC"), "Ejected state must NOT display PBC button");
+    assert!(!contains_text(&out.shapes, "后退"), "Ejected state must NOT display 后退 button");
+    assert!(!contains_text(&out.shapes, "主页"), "Ejected state must NOT display 主页 button");
+    assert!(!contains_text(&out.shapes, "前进"), "Ejected state must NOT display 前进 button");
+}

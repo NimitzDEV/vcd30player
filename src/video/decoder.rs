@@ -100,7 +100,8 @@ impl MpegDecoder {
         let height = unsafe { plm_get_height(raw) } as u32;
         let framerate = unsafe { plm_get_framerate(raw) };
         let samplerate = unsafe { plm_get_samplerate(raw) } as u32;
-        let duration = unsafe { plm_get_duration(raw) };
+        let raw_duration = unsafe { plm_get_duration(raw) };
+        let duration = if raw_duration >= 0.0 { raw_duration } else { 0.0 };
         let num_video = unsafe { plm_get_num_video_streams(raw) };
         let num_audio = unsafe { plm_get_num_audio_streams(raw) };
 

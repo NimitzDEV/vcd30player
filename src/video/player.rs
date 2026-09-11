@@ -16,8 +16,9 @@ pub struct VideoPlayer {
     pub state: VideoPlayState,
     audio_sink: Option<Sink>,
     current_time: f64,
-    start_time: f64,
-    end_time: f64,
+    clip_start_time: f64,
+    clip_end_time: f64,
+    playback_base_time: f64,
     // Wall clock for fallback and smooth interpolation
     play_start_instant: Option<Instant>,
     paused_duration_secs: f64,
@@ -67,31 +68,42 @@ impl VideoPlayer {
         let has_audio = decoder.has_audio();
         let has_video = decoder.has_video();
 
-        let start_time = (start_frame as f64 / framerate).min(duration);
-        let end_time = if end_frame > 0 {
-            (end_frame as f64 / framerate).min(duration)
+        let clip_start_time = if duration > 0.0 {
+            (start_frame as f64 / framerate).min(duration)
         } else {
+            start_frame as f64 / framerate
+        };
+        let clip_end_time = if end_frame > 0 {
+            if duration > 0.0 {
+                (end_frame as f64 / framerate).min(duration)
+            } else {
+                end_frame as f64 / framerate
+            }
+        } else if duration > 0.0 {
             duration
+        } else {
+            f64::MAX
         };
 
-        if start_time > 0.0 {
-            decoder.seek(start_time);
+        if clip_start_time > 0.0 {
+            decoder.seek(clip_start_time);
         }
 
         let mut current_frame_rgba = vec![0u8; (width * height * 4) as usize];
         for pixel in current_frame_rgba.chunks_exact_mut(4) {
             pixel[3] = 255;
         }
-        let initial_pts = decoder.decode_video_frame(&mut current_frame_rgba).unwrap_or(start_time);
+        let initial_pts = decoder.decode_video_frame(&mut current_frame_rgba).unwrap_or(clip_start_time);
 
 
         Ok(Self {
             decoder,
             state: VideoPlayState::Playing,
             audio_sink,
-            current_time: start_time,
-            start_time,
-            end_time,
+            current_time: clip_start_time,
+            clip_start_time,
+            clip_end_time,
+            playback_base_time: clip_start_time,
             play_start_instant: Some(Instant::now()),
             paused_duration_secs: 0.0,
             pause_start_instant: None,
@@ -149,11 +161,11 @@ impl VideoPlayer {
             0.0
         };
 
-        let target_clock = self.start_time + elapsed_wall;
+        let target_clock = self.playback_base_time + elapsed_wall;
         self.current_time = target_clock;
 
         // Check bounds / end
-        if self.current_time >= self.end_time || self.decoder.has_ended() {
+        if self.current_time >= self.clip_end_time || self.decoder.has_ended() {
             self.state = VideoPlayState::Ended;
             if let Some(ref sink) = self.audio_sink {
                 sink.stop();
@@ -201,7 +213,7 @@ impl VideoPlayer {
                 }
             }
             VideoPlayState::Ended | VideoPlayState::Stopped => {
-                self.seek(self.start_time);
+                self.seek(self.clip_start_time);
                 self.state = VideoPlayState::Playing;
             }
         }
@@ -217,7 +229,7 @@ impl VideoPlayer {
 
     /// Seeks to a specific target timestamp in seconds.
     pub fn seek(&mut self, target_seconds: f64) {
-        let clamped = target_seconds.max(self.start_time).min(self.end_time);
+        let clamped = target_seconds.max(self.clip_start_time).min(self.clip_end_time);
         if let Some(ref sink) = self.audio_sink {
             sink.stop();
         }
@@ -229,7 +241,12 @@ impl VideoPlayer {
         // Reset clock baseline
         self.play_start_instant = Some(Instant::now());
         self.paused_duration_secs = 0.0;
-        self.start_time = clamped;
+        self.playback_base_time = clamped;
+
+        // If previously ended, un-end upon seeking back into valid range
+        if self.state == VideoPlayState::Ended {
+            self.state = VideoPlayState::Playing;
+        }
 
         // Immediately decode one frame for preview
         if let Some(pts) = self.decoder.decode_video_frame(&mut self.current_frame_rgba) {
@@ -263,6 +280,14 @@ impl VideoPlayer {
 
     pub fn framerate(&self) -> f64 {
         self.framerate
+    }
+
+    pub fn clip_start_time(&self) -> f64 {
+        self.clip_start_time
+    }
+
+    pub fn clip_end_time(&self) -> f64 {
+        self.clip_end_time
     }
 
     pub fn is_playing(&self) -> bool {

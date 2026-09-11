@@ -8,13 +8,16 @@ fn test_cdxa_extraction_and_decoder_metadata() {
         eprintln!("No live CD-ROM mounted, skipping real video test.");
         return;
     };
-    let dat_path = root.join("MPEGAV").join("MUSIC01.DAT");
-    if !dat_path.exists() {
-        eprintln!("Disc not found at {}, skipping test.", dat_path.display());
+    let dat_path = if root.join("MPEGAV").join("MUSIC01.DAT").exists() {
+        root.join("MPEGAV").join("MUSIC01.DAT")
+    } else if root.join("MPEGAV").join("AVSEQ01.DAT").exists() {
+        root.join("MPEGAV").join("AVSEQ01.DAT")
+    } else {
+        eprintln!("DAT file not found in MPEGAV, skipping test.");
         return;
-    }
+    };
 
-    let raw_bytes = std::fs::read(&dat_path).expect("Failed to read MUSIC01.DAT");
+    let raw_bytes = std::fs::read(&dat_path).expect("Failed to read DAT file");
     assert!(raw_bytes.len() > 100_000);
 
     // 1. Demux test
@@ -63,16 +66,19 @@ fn test_video_player_playback_and_seek() {
         eprintln!("No live CD-ROM mounted, skipping real video test.");
         return;
     };
-    let dat_path = root.join("MPEGAV").join("MUSIC01.DAT");
-    if !dat_path.exists() {
-        eprintln!("Disc not found at {}, skipping test.", dat_path.display());
+    let (dat_path, dat_name) = if root.join("MPEGAV").join("MUSIC01.DAT").exists() {
+        (root.join("MPEGAV").join("MUSIC01.DAT"), "MUSIC01.DAT")
+    } else if root.join("MPEGAV").join("AVSEQ01.DAT").exists() {
+        (root.join("MPEGAV").join("AVSEQ01.DAT"), "AVSEQ01.DAT")
+    } else {
+        eprintln!("DAT file not found in MPEGAV, skipping test.");
         return;
-    }
+    };
 
-    let raw_bytes = std::fs::read(&dat_path).expect("Failed to read MUSIC01.DAT");
+    let raw_bytes = std::fs::read(&dat_path).expect("Failed to read DAT file");
     let mut player = VideoPlayer::new(
         &raw_bytes,
-        "MUSIC01.DAT".to_string(),
+        dat_name.to_string(),
         None, // headless / silent mode
         0,
         150,
@@ -101,9 +107,17 @@ fn test_video_player_playback_and_seek() {
     assert_eq!(player.state, VideoPlayState::Playing);
     assert!(player.is_playing());
 
-    // Seek
+    // Forward Seek
     player.seek(2.5);
     assert!((player.current_time() - 2.5).abs() < 0.5);
+
+    // Backward Seek (must be able to seek back to earlier timestamps)
+    player.seek(0.8);
+    assert!((player.current_time() - 0.8).abs() < 0.5, "Must be able to seek backward to 0.8s, got {}", player.current_time());
+
+    // Seek all the way back to start (0.0s)
+    player.seek(0.0);
+    assert!((player.current_time() - 0.0).abs() < 0.5, "Must be able to seek backward to start (0.0s), got {}", player.current_time());
 
     // Frame buffer check
     let (pw, ph) = player.dimensions();

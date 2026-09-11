@@ -179,3 +179,67 @@ fn test_video_playback_escape_key_no_deadlock() {
     assert_eq!(app.kernel.current_page_name, "SC1.CHM", "Must return to SC1.CHM");
 }
 
+#[test]
+fn test_video_seek_forward_and_backward_and_prev_track() {
+    let disc_path = common::get_test_disc_root();
+    let mut kernel = VcdKernel::new();
+    kernel.open_disc(disc_path).expect("Failed to open disc");
+
+    // Switch to VCD 1.0 Linear mode to start playing tracks
+    kernel
+        .switch_active_mode(vcd30_player::core::kernel::ActiveDiscMode::Vcd10Linear)
+        .expect("Switch to VCD 1.0 mode");
+    assert!(kernel.is_video_active(), "Track video must be active");
+    assert_eq!(kernel.current_track_index, Some(0));
+
+    let player = kernel.active_video.as_mut().unwrap();
+    // Pause video to control time precisely during testing
+    player.toggle_play_pause();
+
+    // 1. Seek forward
+    player.seek(4.0);
+    assert!(
+        (player.current_time() - 4.0).abs() < 0.5,
+        "Current time should seek forward to ~4.0s, got {}",
+        player.current_time()
+    );
+
+    // 2. Backward Seek (Must NOT be clamped by the previous forward seek position!)
+    player.seek(1.5);
+    assert!(
+        (player.current_time() - 1.5).abs() < 0.5,
+        "Current time must seek backward to ~1.5s, got {}",
+        player.current_time()
+    );
+
+    // 3. Backward Seek to 0.0s (start of track)
+    player.seek(0.0);
+    assert!(
+        (player.current_time() - 0.0).abs() < 0.5,
+        "Current time must seek backward to 0.0s, got {}",
+        player.current_time()
+    );
+
+    // 4. Test Prev Track behavior after forward seek:
+    // Fast-forward again to > 3.0 seconds
+    player.seek(4.5);
+    assert!(player.current_time() > 3.0);
+    let cur_track = kernel.current_track_index;
+
+    // Clicking "⏮ 上一曲" when > 3.0s MUST restart the current track at 0.0s
+    let restarted = kernel.play_prev_track().expect("play_prev_track failed");
+    assert!(restarted);
+    assert_eq!(kernel.current_track_index, cur_track, "Track index must not change when restarting current track");
+    let cur_time = kernel.active_video.as_ref().unwrap().current_time();
+    assert!(
+        (cur_time - 0.0).abs() < 0.5,
+        "Restarting track must reset current time to 0.0s, got {}",
+        cur_time
+    );
+
+    // Clicking "⏮ 上一曲" again when <= 3.0s advances to previous track (or stays at 0 if at track 0)
+    let advanced = kernel.play_prev_track().expect("play_prev_track failed");
+    assert!(advanced);
+}
+
+

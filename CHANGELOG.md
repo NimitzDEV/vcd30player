@@ -7,6 +7,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-12
+
+### Added
+- Green CRT-style On-Screen Display (OSD) overlay with four-direction text outlines and fade-out animation.
+- Three OSD display modes: auto-fade on action, persistent timecode in the top right, and disabled.
+- On-screen feedback for playback controls, seeking, track changes, audio channel switching, disc format identification, and remote numeric input.
+- Toolbar button next to the About button to cycle OSD modes.
+- Global keyboard shortcuts: `O` for OSD display mode, `L` for audio channels, and `R` for repeat mode.
+- Embedded Windows PE version resources in release binaries (product name, file description, versions, and copyright).
+- Windows GUI subsystem configuration to launch without a background console window in release builds.
+
+### Changed
+- Hotspot highlight toggle and canvas overlays now appear only in VCD 3.0 interactive mode.
+
+### Fixed
+- Entering the number of the currently playing track on the remote control (such as 38) now restarts playback instead of sticking on the input prompt.
+- Numeric track selection in VCD 2.0 mode now falls back to direct track playback if the disc lacks an explicit PBC playlist descriptor for that track.
+
 ## [0.3.1] - 2026-09-12
 
 ### Fixed
@@ -169,7 +187,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   - Test suite covering unit and integration tests across format parsing, VM execution, audio mixing, and video playback.
   - GitHub Actions CI workflow supporting automated check, test, and clippy runs on Windows and Ubuntu.
 
-[Unreleased]: https://github.com/NimitzDEV/vcd30player/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/NimitzDEV/vcd30player/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/NimitzDEV/vcd30player/compare/v0.3.1...v0.4.0
+[0.3.1]: https://github.com/NimitzDEV/vcd30player/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/NimitzDEV/vcd30player/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/NimitzDEV/vcd30player/compare/v0.1.6...v0.2.0
 [0.1.6]: https://github.com/NimitzDEV/vcd30player/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/NimitzDEV/vcd30player/compare/v0.1.4...v0.1.5

@@ -7,6 +7,24 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-12
+
+### 新增 (Added)
+- 荧光绿 CRT 风格屏幕提示（OSD）图层，带四向暗色描边与渐隐动画。
+- 三种 OSD 显示模式：按需自动隐藏、右上角常驻时间码与完全关闭。
+- 屏幕操作反馈涵盖播放暂停、快进快退、切换曲目、声道切换、光盘格式识别与数字键输入。
+- 底部状态栏新增 OSD 模式切换按钮，位于关于按钮前方。
+- 全局快捷键：`O` 切换 OSD 模式，`L` 切换左右声道，`R` 切换循环模式。
+- Windows 可执行文件属性中嵌入 PE 版本信息（产品名称、文件说明、版本号与版权）。
+- Windows 生产版本配置图形界面子系统，启动时不再弹出控制台黑窗口。
+
+### 变更 (Changed)
+- 热区高亮开关与画面线框仅在 VCD 3.0 互动模式下展示和绘制。
+
+### 修复 (Fixed)
+- 修复遥控器输入当前正在播放的曲目号（如 38）时，画面与状态栏停留在输入提示态的问题。
+- 修复 VCD 2.0 模式下输入未单独定义 PBC 播放列表的轨道号时无法切歌的问题。
+
 ## [0.3.1] - 2026-09-12
 
 ### 修复 (Fixed)
@@ -169,9 +187,13 @@
   - 测试用例覆盖格式解析、脚本虚拟机、音频与视频播放。
   - 配置 GitHub Actions 工作流，支持 Windows 与 Ubuntu 自动化测试。
 
-[Unreleased]: https://github.com/NimitzDEV/vcd30player/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/NimitzDEV/vcd30player/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/NimitzDEV/vcd30player/compare/v0.3.1...v0.4.0
+[0.3.1]: https://github.com/NimitzDEV/vcd30player/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/NimitzDEV/vcd30player/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/NimitzDEV/vcd30player/compare/v0.1.6...v0.2.0
 [0.1.6]: https://github.com/NimitzDEV/vcd30player/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/NimitzDEV/vcd30player/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/NimitzDEV/vcd30player/compare/v0.1.0...v0.1.4
 [0.1.0]: https://github.com/NimitzDEV/vcd30player/releases/tag/v0.1.0
+

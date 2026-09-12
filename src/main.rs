@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 use eframe::egui::Vec2;
 use std::path::PathBuf;
 use vcd30_player::ui::app::VcdPlayerApp;

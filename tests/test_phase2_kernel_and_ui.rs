@@ -500,9 +500,10 @@ fn test_navigation_buttons_visibility_in_vcd10_vcd20_and_vcd30() {
     assert!(contains_text(&out.shapes, "后退"), "VCD 3.0 must display 后退 button");
     assert!(contains_text(&out.shapes, "主页"), "VCD 3.0 must display 主页 button");
     assert!(contains_text(&out.shapes, "前进"), "VCD 3.0 must display 前进 button");
+    assert!(contains_text(&out.shapes, "热区高亮"), "VCD 3.0 must display 热区高亮 checkbox");
     assert!(!contains_text(&out.shapes, "PBC"), "VCD 3.0 must NOT display PBC button");
 
-    // 2. In VCD 2.0 Classic mode: PBC button MUST be rendered; 后退, 主页, 前进 MUST NOT be rendered
+    // 2. In VCD 2.0 Classic mode: PBC button MUST be rendered; 后退, 主页, 前进, 热区高亮 MUST NOT be rendered
     app.kernel
         .switch_active_mode(ActiveDiscMode::Vcd20Classic)
         .unwrap();
@@ -519,8 +520,9 @@ fn test_navigation_buttons_visibility_in_vcd10_vcd20_and_vcd30() {
     assert!(!contains_text(&out.shapes, "后退"), "VCD 2.0 must NOT display 后退 button");
     assert!(!contains_text(&out.shapes, "主页"), "VCD 2.0 must NOT display 主页 button");
     assert!(!contains_text(&out.shapes, "前进"), "VCD 2.0 must NOT display 前进 button");
+    assert!(!contains_text(&out.shapes, "热区高亮"), "VCD 2.0 must NOT display 热区高亮 checkbox");
 
-    // 3. In VCD 1.0 Linear mode: Neither PBC nor 后退, 主页, 前进 MUST be rendered!
+    // 3. In VCD 1.0 Linear mode: Neither PBC nor 后退, 主页, 前进, 热区高亮 MUST be rendered!
     app.kernel
         .switch_active_mode(ActiveDiscMode::Vcd10Linear)
         .unwrap();
@@ -537,8 +539,9 @@ fn test_navigation_buttons_visibility_in_vcd10_vcd20_and_vcd30() {
     assert!(!contains_text(&out.shapes, "后退"), "VCD 1.0 must NOT display 后退 button");
     assert!(!contains_text(&out.shapes, "主页"), "VCD 1.0 must NOT display 主页 button");
     assert!(!contains_text(&out.shapes, "前进"), "VCD 1.0 must NOT display 前进 button");
+    assert!(!contains_text(&out.shapes, "热区高亮"), "VCD 1.0 must NOT display 热区高亮 checkbox");
 
-    // 4. When disc is ejected: Neither PBC nor 后退, 主页, 前进 MUST be rendered
+    // 4. When disc is ejected: Neither PBC nor 后退, 主页, 前进, 热区高亮 MUST be rendered
     app.eject_disc();
     let mut out = ctx.run_ui(raw_input.clone(), |ui| {
         app.show(ui);
@@ -553,4 +556,5 @@ fn test_navigation_buttons_visibility_in_vcd10_vcd20_and_vcd30() {
     assert!(!contains_text(&out.shapes, "后退"), "Ejected state must NOT display 后退 button");
     assert!(!contains_text(&out.shapes, "主页"), "Ejected state must NOT display 主页 button");
     assert!(!contains_text(&out.shapes, "前进"), "Ejected state must NOT display 前进 button");
+    assert!(!contains_text(&out.shapes, "热区高亮"), "Ejected state must NOT display 热区高亮 checkbox");
 }

@@ -987,8 +987,9 @@ impl VcdPlayerApp {
                     ui.add(egui::Separator::default().spacing(0.0));
                 }
 
-                // Requirement 3: 热区高亮和侧边面板开关放在最底部的工具条上，在 前进按钮的后面
-                ui.checkbox(&mut self.show_hotspots, "🎯 热区高亮");
+                if is_vcd30 {
+                    ui.checkbox(&mut self.show_hotspots, "🎯 热区高亮");
+                }
                 let mut show_panel = self.show_remote;
                 if ui
                     .checkbox(&mut show_panel, "🎮 侧边面板")
@@ -1566,8 +1567,11 @@ impl VcdPlayerApp {
                     );
                 }
 
-                // If video is active, keep canvas completely clean (no cursor, no hotspot overlays)
-                if self.kernel.is_video_active() {
+                let is_vcd30 = self.is_disc_loaded()
+                    && self.kernel.active_mode == crate::core::kernel::ActiveDiscMode::Vcd30Interactive;
+
+                // If video is active or not in VCD 3.0 mode, keep canvas completely clean (no cursor, no hotspot overlays)
+                if self.kernel.is_video_active() || !is_vcd30 {
                     self.hovered_hotspot = None;
                 } else {
                     // Render OSD Cursor if active (e.g. WEIGHT.CHM sex selection / height digit entry)
@@ -1660,7 +1664,7 @@ impl VcdPlayerApp {
                     }
 
                     // Debug: Draw Hotspots overlays
-                    if self.show_hotspots {
+                    if is_vcd30 && self.show_hotspots {
                         let mut all_areas = Vec::new();
                         if let Some(doc) = &self.kernel.current_page {
                             all_areas.extend(doc.get_all_hotspots());

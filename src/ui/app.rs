@@ -27,6 +27,7 @@ pub struct VcdPlayerApp {
     pub status_message: String,
     pub status_timestamp: Option<std::time::Instant>,
     pub idle_message: String,
+    pub osd: crate::ui::osd::OsdManager,
 }
 
 fn setup_custom_fonts(ctx: &egui::Context) {
@@ -117,6 +118,8 @@ impl VcdPlayerApp {
         let mut status = "空闲 - 请点击“加载光盘”载入 VCD 光盘".to_string();
         let mut has_initial_disc = false;
 
+        let mut initial_osd_ver = None;
+
         if let Some(root) = initial_disc {
             if root.exists() {
                 if let Err(e) = kernel.open_disc(root.clone()) {
@@ -128,9 +131,15 @@ impl VcdPlayerApp {
                         .map(|t| t.to_string())
                         .unwrap_or_else(|| "光盘".to_string());
                     status = format!("已加载光盘: {}", disc_desc);
+                    initial_osd_ver = kernel.disc_type.as_ref().map(|t| t.version_label());
                     has_initial_disc = true;
                 }
             }
+        }
+
+        let mut osd = crate::ui::osd::OsdManager::new();
+        if let Some(ver) = initial_osd_ver {
+            osd.show(ver);
         }
 
         Self {
@@ -151,11 +160,16 @@ impl VcdPlayerApp {
                 None
             },
             idle_message: "空闲 - 请点击“加载光盘”载入 VCD 光盘".to_string(),
+            osd,
         }
     }
 
     /// Creates an app instance wrapping an existing VcdKernel.
     pub fn from_kernel(kernel: VcdKernel) -> Self {
+        let mut osd = crate::ui::osd::OsdManager::new();
+        if let Some(ref dt) = kernel.disc_type {
+            osd.show(dt.version_label());
+        }
         Self {
             kernel,
             texture: None,
@@ -167,9 +181,10 @@ impl VcdPlayerApp {
             updater: crate::updater::UpdateManager::new(),
             drawer_tab: DrawerTab::Remote,
             hovered_hotspot: None,
-            status_message: String::new(),
+            status_message: "就绪".to_string(),
             status_timestamp: None,
-            idle_message: "空闲 - 请点击“加载光盘”载入 VCD 光盘".to_string(),
+            idle_message: "就绪".to_string(),
+            osd,
         }
     }
 
@@ -266,6 +281,7 @@ impl VcdPlayerApp {
         self.texture_dirty = true;
         self.idle_message = "光盘已弹出，请加载光盘".to_string();
         self.set_status("光盘已弹出，请加载光盘");
+        self.osd.show("DISC EJECT");
     }
 
     /// Toggles the side panel, dynamically adjusting the window width so the central canvas is not compressed.
@@ -292,6 +308,7 @@ impl VcdPlayerApp {
     /// Resets playback from the beginning in the current active mode.
     /// Mode switching is not performed here and must be user-triggered.
     pub fn reset_disc(&mut self, ctx: &egui::Context) {
+        self.osd.show("DISC RESET");
         if !self.kernel.disc_root.as_os_str().is_empty() {
             if let Err(e) = self.kernel.restart_current_mode() {
                 self.set_status(format!("重置失败: {}", e));
@@ -317,9 +334,13 @@ impl VcdPlayerApp {
 
     /// Injects a remote control key and synchronizes status and canvas.
     pub fn send_remote_key(&mut self, key: i32, ctx: &egui::Context) {
+        let old_counter = self.kernel.track_play_counter;
         let old_track = self.kernel.current_track_index;
         let old_page = self.kernel.current_page_name.clone();
+        let was_buffering = !self.kernel.pbc_digit_buffer.is_empty();
+
         self.kernel.inject_remote_key(key);
+
         if !self.kernel.pbc_digit_buffer.is_empty() {
             let buf_str: String = self
                 .kernel
@@ -328,14 +349,33 @@ impl VcdPlayerApp {
                 .map(|d| d.to_string())
                 .collect();
             self.set_status(format!("输入曲目: {} (按 Enter 确认或等待)", buf_str));
-        } else if self.kernel.current_track_index != old_track {
+            self.osd.show(format!("INPUT: {}_", buf_str));
+        } else if self.kernel.track_play_counter != old_counter || self.kernel.current_track_index != old_track {
             if let Some(idx) = self.kernel.current_track_index {
-                if let Some(t) = self.kernel.tracks.get(idx) {
-                    self.set_status(format!("正在播放: 轨道 {:02} ({})", t.index, t.title));
+                let track_info = self.kernel.tracks.get(idx).map(|t| (t.index, t.title.clone()));
+                if let Some((t_idx, t_title)) = track_info {
+                    self.set_status(format!("正在播放: 轨道 {:02} ({})", t_idx, t_title));
+                    if (0..=9).contains(&key) || key == 31 {
+                        self.osd.show(format!("SELECT: TRK {:02}", t_idx));
+                    } else if key == 34 || key == 36 {
+                        self.osd.show(format!("⏮ TRK {:02}", t_idx));
+                    } else if key == 35 || key == 37 {
+                        self.osd.show(format!("⏭ TRK {:02}", t_idx));
+                    } else {
+                        self.osd.show(format!("TRK {:02}", t_idx));
+                    }
                 }
             }
         } else if self.kernel.current_page_name != old_page && !self.kernel.current_page_name.is_empty() {
             self.set_status(format!("已切换至: {}", self.kernel.current_page_name));
+        } else if was_buffering {
+            if let Some(idx) = self.kernel.current_track_index {
+                let track_info = self.kernel.tracks.get(idx).map(|t| (t.index, t.title.clone()));
+                if let Some((t_idx, t_title)) = track_info {
+                    self.set_status(format!("正在播放: 轨道 {:02} ({})", t_idx, t_title));
+                    self.osd.show(format!("SELECT: TRK {:02}", t_idx));
+                }
+            }
         }
         self.texture = None;
         self.texture_dirty = true;
@@ -419,8 +459,10 @@ impl VcdPlayerApp {
         // Check for numeric input buffer timeout (e.g. 2.0s without Enter)
         if let Ok(true) = self.kernel.check_pbc_digit_timeout() {
             if let Some(idx) = self.kernel.current_track_index {
-                if let Some(t) = self.kernel.tracks.get(idx) {
-                    self.set_status(format!("正在播放: 轨道 {:02} ({})", t.index, t.title));
+                let track_info = self.kernel.tracks.get(idx).map(|t| (t.index, t.title.clone()));
+                if let Some((t_idx, t_title)) = track_info {
+                    self.set_status(format!("正在播放: 轨道 {:02} ({})", t_idx, t_title));
+                    self.osd.show(format!("SELECT: TRK {:02}", t_idx));
                 }
             }
             self.texture = None;
@@ -505,6 +547,13 @@ impl VcdPlayerApp {
                                         .map(|t| t.to_string())
                                         .unwrap_or_else(|| "光盘".to_string());
                                     self.set_status(format!("已打开: {}", disc_desc));
+                                    let ver_label = self
+                                        .kernel
+                                        .disc_type
+                                        .as_ref()
+                                        .map(|t| t.version_label())
+                                        .unwrap_or("VCD");
+                                    self.osd.show(ver_label);
                                     self.texture = None;
                                     self.texture_dirty = true;
                                     ctx.request_repaint();
@@ -597,6 +646,7 @@ impl VcdPlayerApp {
                                         self.set_status(format!("恢复失败: {}", e));
                                     } else {
                                         self.set_status("已恢复 VCD 3.0 互动模式");
+                                        self.osd.show("MODE: VCD 3.0");
                                         self.texture = None;
                                         self.texture_dirty = true;
                                         ctx.request_repaint();
@@ -617,6 +667,7 @@ impl VcdPlayerApp {
                                         self.set_status(format!("切换失败: {}", e));
                                     } else {
                                         self.set_status("已切换至 VCD 2.0 经典模式");
+                                        self.osd.show("MODE: VCD 2.0");
                                         self.texture = None;
                                         self.texture_dirty = true;
                                         ctx.request_repaint();
@@ -632,6 +683,7 @@ impl VcdPlayerApp {
                                         self.set_status(format!("切换失败: {}", e));
                                     } else {
                                         self.set_status("已切换至 VCD 1.0 纯视频模式");
+                                        self.osd.show("MODE: VCD 1.0");
                                         self.texture = None;
                                         self.texture_dirty = true;
                                         ctx.request_repaint();
@@ -675,6 +727,11 @@ impl VcdPlayerApp {
                     };
                     if ui.button(play_icon).on_hover_text(play_tooltip).clicked() {
                         player.toggle_play_pause();
+                        if is_playing {
+                            self.osd.show("⏸ PAUSE");
+                        } else {
+                            self.osd.show("▶ PLAY");
+                        }
                     }
                 } else {
                     let can_start = is_vcd12 && !self.kernel.tracks.is_empty();
@@ -685,8 +742,10 @@ impl VcdPlayerApp {
                     {
                         let idx = self.kernel.current_track_index.unwrap_or(0);
                         let _ = self.kernel.play_track(idx);
-                        if let Some(t) = self.kernel.tracks.get(idx) {
-                            self.set_status(format!("正在播放: 轨道 {:02} ({})", t.index, t.title));
+                        let track_info = self.kernel.tracks.get(idx).map(|t| (t.index, t.title.clone()));
+                        if let Some((t_idx, t_title)) = track_info {
+                            self.set_status(format!("正在播放: 轨道 {:02} ({})", t_idx, t_title));
+                            self.osd.show(format!("▶ TRK {:02}", t_idx));
                         }
                         self.texture = None;
                         self.texture_dirty = true;
@@ -729,6 +788,12 @@ impl VcdPlayerApp {
                         ));
                     if mode_btn.clicked() {
                         self.kernel.playback_mode = self.kernel.playback_mode.cycle();
+                        let osd_label = match self.kernel.playback_mode {
+                            crate::core::kernel::PlaybackMode::Sequential => "REPEAT: OFF",
+                            crate::core::kernel::PlaybackMode::ListRepeat => "REPEAT: ALL",
+                            crate::core::kernel::PlaybackMode::SingleRepeat => "REPEAT: 1",
+                        };
+                        self.osd.show(osd_label);
                         self.set_status(format!("播放模式: {}", self.kernel.playback_mode.description()));
                     }
 
@@ -748,6 +813,12 @@ impl VcdPlayerApp {
                         if let Some(ref mut player) = self.kernel.active_video {
                             player.set_channel_mode(self.kernel.channel_mode);
                         }
+                        let osd_label = match self.kernel.channel_mode {
+                            crate::audio::AudioChannelMode::Stereo => "AUDIO: STEREO",
+                            crate::audio::AudioChannelMode::LeftOnly => "AUDIO: LEFT",
+                            crate::audio::AudioChannelMode::RightOnly => "AUDIO: RIGHT",
+                        };
+                        self.osd.show(osd_label);
                         self.set_status(format!("声道模式: {}", self.kernel.channel_mode.description()));
                     }
 
@@ -800,8 +871,10 @@ impl VcdPlayerApp {
                 if prev_track {
                     let _ = self.kernel.play_prev_track();
                     if let Some(idx) = self.kernel.current_track_index {
-                        if let Some(t) = self.kernel.tracks.get(idx) {
-                            self.set_status(format!("正在播放: 轨道 {:02} ({})", t.index, t.title));
+                        let track_info = self.kernel.tracks.get(idx).map(|t| (t.index, t.title.clone()));
+                        if let Some((t_idx, t_title)) = track_info {
+                            self.set_status(format!("正在播放: 轨道 {:02} ({})", t_idx, t_title));
+                            self.osd.show(format!("⏮ TRK {:02}", t_idx));
                         }
                     }
                     self.texture = None;
@@ -812,8 +885,10 @@ impl VcdPlayerApp {
                 if next_track {
                     let _ = self.kernel.play_next_track(false);
                     if let Some(idx) = self.kernel.current_track_index {
-                        if let Some(t) = self.kernel.tracks.get(idx) {
-                            self.set_status(format!("正在播放: 轨道 {:02} ({})", t.index, t.title));
+                        let track_info = self.kernel.tracks.get(idx).map(|t| (t.index, t.title.clone()));
+                        if let Some((t_idx, t_title)) = track_info {
+                            self.set_status(format!("正在播放: 轨道 {:02} ({})", t_idx, t_title));
+                            self.osd.show(format!("⏭ TRK {:02}", t_idx));
                         }
                     }
                     self.texture = None;
@@ -835,6 +910,7 @@ impl VcdPlayerApp {
                         let _ = self.kernel.stop_video_and_exit();
                         self.set_status("已停止视频播放");
                     }
+                    self.osd.show("⏹ STOP");
                     self.texture = None;
                     self.texture_dirty = true;
                     ctx.request_repaint();
@@ -857,8 +933,10 @@ impl VcdPlayerApp {
                     {
                         if let Err(e) = self.kernel.trigger_pbc_menu() {
                             self.set_status(format!("PBC: {}", e));
+                            self.osd.show_colored(format!("PBC: {}", e), crate::ui::osd::OSD_YELLOW);
                         } else {
                             self.set_status("已呼出 PBC 菜单");
+                            self.osd.show("PBC: ON");
                             self.texture = None;
                             self.texture_dirty = true;
                             ctx.request_repaint();
@@ -922,10 +1000,18 @@ impl VcdPlayerApp {
 
                 ui.add(egui::Separator::default().spacing(0.0));
 
-                // Right side: About button on the far right (after playback status bar, icon only)
+                // Right side: About button on the far right, preceded by OSD mode status button
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("ℹ").on_hover_text("关于软件").clicked() {
                         self.show_about = true;
+                    }
+
+                    let osd_icon = self.osd.mode.icon();
+                    let osd_tooltip = self.osd.mode.tooltip();
+                    if ui.button(osd_icon).on_hover_text(osd_tooltip).clicked() {
+                        let new_mode = self.osd.toggle_mode();
+                        self.set_status(format!("OSD 模式: {}", new_mode.osd_label()));
+                        ctx.request_repaint();
                     }
 
                     // Remaining middle space: Unified Status Zone
@@ -959,11 +1045,57 @@ impl VcdPlayerApp {
         });
 
         // 3. Keyboard Input Handling
+        let mut toggle_osd = false;
+        let mut toggle_channel = false;
+        let mut toggle_repeat = false;
+        ctx.input(|i| {
+            if i.key_pressed(egui::Key::O) {
+                toggle_osd = true;
+            } else if i.key_pressed(egui::Key::L) {
+                toggle_channel = true;
+            } else if i.key_pressed(egui::Key::R) {
+                toggle_repeat = true;
+            }
+        });
+
+        if toggle_osd {
+            let new_mode = self.osd.toggle_mode();
+            self.set_status(format!("OSD 模式: {}", new_mode.osd_label()));
+            ctx.request_repaint();
+        }
+
+        if toggle_channel {
+            self.kernel.channel_mode = self.kernel.channel_mode.cycle();
+            if let Some(ref mut player) = self.kernel.active_video {
+                player.set_channel_mode(self.kernel.channel_mode);
+            }
+            let osd_label = match self.kernel.channel_mode {
+                crate::audio::AudioChannelMode::Stereo => "AUDIO: STEREO",
+                crate::audio::AudioChannelMode::LeftOnly => "AUDIO: LEFT",
+                crate::audio::AudioChannelMode::RightOnly => "AUDIO: RIGHT",
+            };
+            self.osd.show(osd_label);
+            self.set_status(format!("声道模式: {}", self.kernel.channel_mode.description()));
+        }
+
+        if toggle_repeat {
+            self.kernel.playback_mode = self.kernel.playback_mode.cycle();
+            let osd_label = match self.kernel.playback_mode {
+                crate::core::kernel::PlaybackMode::Sequential => "REPEAT: OFF",
+                crate::core::kernel::PlaybackMode::ListRepeat => "REPEAT: ALL",
+                crate::core::kernel::PlaybackMode::SingleRepeat => "REPEAT: 1",
+            };
+            self.osd.show(osd_label);
+            self.set_status(format!("播放模式: {}", self.kernel.playback_mode.description()));
+        }
+
         if self.kernel.is_video_active() {
             let mut toggle_pause = false;
             let mut stop_video = false;
             let mut seek_delta = 0.0;
             let mut num_pressed = None;
+            let mut prev_track_key = false;
+            let mut next_track_key = false;
 
             ctx.input(|i| {
                 if i.key_pressed(egui::Key::Space) {
@@ -974,6 +1106,10 @@ impl VcdPlayerApp {
                     seek_delta = -5.0;
                 } else if i.key_pressed(egui::Key::ArrowRight) {
                     seek_delta = 5.0;
+                } else if i.key_pressed(egui::Key::PageUp) {
+                    prev_track_key = true;
+                } else if i.key_pressed(egui::Key::PageDown) {
+                    next_track_key = true;
                 } else if self.kernel.active_mode == crate::core::kernel::ActiveDiscMode::Vcd20Classic
                     || self.kernel.active_mode == crate::core::kernel::ActiveDiscMode::Vcd10Linear
                 {
@@ -1006,9 +1142,43 @@ impl VcdPlayerApp {
                 self.send_remote_key(num, &ctx);
             }
 
+            if prev_track_key {
+                let _ = self.kernel.play_prev_track();
+                if let Some(idx) = self.kernel.current_track_index {
+                    let track_info = self.kernel.tracks.get(idx).map(|t| (t.index, t.title.clone()));
+                    if let Some((t_idx, t_title)) = track_info {
+                        self.set_status(format!("正在播放: 轨道 {:02} ({})", t_idx, t_title));
+                        self.osd.show(format!("⏮ TRK {:02}", t_idx));
+                    }
+                }
+                self.texture = None;
+                self.texture_dirty = true;
+                ctx.request_repaint();
+            }
+
+            if next_track_key {
+                let _ = self.kernel.play_next_track(false);
+                if let Some(idx) = self.kernel.current_track_index {
+                    let track_info = self.kernel.tracks.get(idx).map(|t| (t.index, t.title.clone()));
+                    if let Some((t_idx, t_title)) = track_info {
+                        self.set_status(format!("正在播放: 轨道 {:02} ({})", t_idx, t_title));
+                        self.osd.show(format!("⏭ TRK {:02}", t_idx));
+                    }
+                }
+                self.texture = None;
+                self.texture_dirty = true;
+                ctx.request_repaint();
+            }
+
             if toggle_pause {
                 if let Some(ref mut player) = self.kernel.active_video {
+                    let was_playing = player.is_playing();
                     player.toggle_play_pause();
+                    if was_playing {
+                        self.osd.show("⏸ PAUSE");
+                    } else {
+                        self.osd.show("▶ PLAY");
+                    }
                 }
             }
             if stop_video {
@@ -1019,6 +1189,7 @@ impl VcdPlayerApp {
                 } else {
                     let _ = self.kernel.stop_video_and_exit();
                 }
+                self.osd.show("⏹ STOP");
                 self.texture = None;
                 self.texture_dirty = true;
                 ctx.request_repaint();
@@ -1026,7 +1197,16 @@ impl VcdPlayerApp {
             if seek_delta != 0.0 {
                 if let Some(ref mut player) = self.kernel.active_video {
                     let cur = player.current_time();
-                    player.seek(cur + seek_delta);
+                    let dur = player.duration();
+                    let target = (cur + seek_delta).clamp(0.0, dur);
+                    player.seek(target);
+                    let m = (target / 60.0) as u32;
+                    let s = (target % 60.0) as u32;
+                    if seek_delta > 0.0 {
+                        self.osd.show(format!("⏩ +5s ({:02}:{:02})", m, s));
+                    } else {
+                        self.osd.show(format!("⏪ -5s ({:02}:{:02})", m, s));
+                    }
                 }
             }
         } else {
@@ -1538,6 +1718,42 @@ impl VcdPlayerApp {
                             }
                         }
                     }
+
+                    // Render Phosphor Green OSD on top of video / canvas
+                    let persistent_time = if let Some(ref player) = self.kernel.active_video {
+                        let cur = player.current_time();
+                        let dur = player.duration();
+                        let cur_m = (cur / 60.0) as u32;
+                        let cur_s = (cur % 60.0) as u32;
+                        let dur_m = (dur / 60.0) as u32;
+                        let dur_s = (dur % 60.0) as u32;
+                        if let Some(idx) = self.kernel.current_track_index {
+                            if let Some(t) = self.kernel.tracks.get(idx) {
+                                format!("TRK {:02}  {:02}:{:02} / {:02}:{:02}", t.index, cur_m, cur_s, dur_m, dur_s)
+                            } else {
+                                format!("{:02}:{:02} / {:02}:{:02}", cur_m, cur_s, dur_m, dur_s)
+                            }
+                        } else {
+                            format!("{:02}:{:02} / {:02}:{:02}", cur_m, cur_s, dur_m, dur_s)
+                        }
+                    } else if let Some(idx) = self.kernel.current_track_index {
+                        if let Some(t) = self.kernel.tracks.get(idx) {
+                            format!("TRK {:02}", t.index)
+                        } else {
+                            String::new()
+                        }
+                    } else if self.kernel.active_mode == crate::core::kernel::ActiveDiscMode::Vcd20Classic && self.kernel.pbc.is_some() {
+                        "PBC: ON".to_string()
+                    } else {
+                        String::new()
+                    };
+
+                    self.osd.render(
+                        &ctx,
+                        painter,
+                        display_rect,
+                        if persistent_time.is_empty() { None } else { Some(&persistent_time) },
+                    );
                 });
 
         // Handle borderless window edge resizing and outer frame stroke

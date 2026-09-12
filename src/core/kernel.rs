@@ -379,6 +379,7 @@ pub struct VcdKernel {
     pub active_mode: ActiveDiscMode,
     pub tracks: Vec<crate::vcd::DiscTrackInfo>,
     pub current_track_index: Option<usize>,
+    pub track_play_counter: u64,
     pub pbc: Option<crate::vcd::PbcEngine>,
     pub pbc_digit_buffer: Vec<u8>,
     pub pbc_digit_timestamp: Option<Instant>,
@@ -415,6 +416,7 @@ impl VcdKernel {
             active_mode: ActiveDiscMode::Vcd30Interactive,
             tracks: Vec::new(),
             current_track_index: None,
+            track_play_counter: 0,
             pbc: None,
             pbc_digit_buffer: Vec::new(),
             pbc_digit_timestamp: None,
@@ -1136,11 +1138,23 @@ impl VcdKernel {
                     if let Some(ref mut pbc) = self.pbc {
                         next_action = pbc.select_number(val)?;
                     }
+                    if next_action.is_none() && val >= 1 && val <= self.tracks.len() {
+                        if !matches!(self.pbc.as_ref().map(|p| &p.state), Some(crate::vcd::PbcState::InSelection { .. })) {
+                            self.play_track(val - 1).map_err(|e| e.to_string())?;
+                            return Ok(());
+                        }
+                    }
                 }
             }
         } else if let Some(ref mut pbc) = self.pbc {
             let sel_num = digit as usize;
             next_action = pbc.select_number(sel_num)?;
+            if next_action.is_none() && sel_num >= 1 && sel_num <= self.tracks.len() {
+                if !matches!(self.pbc.as_ref().map(|p| &p.state), Some(crate::vcd::PbcState::InSelection { .. })) {
+                    self.play_track(sel_num - 1).map_err(|e| e.to_string())?;
+                    return Ok(());
+                }
+            }
         }
 
         if let Some(action) = next_action {
@@ -1158,6 +1172,12 @@ impl VcdKernel {
             self.pbc_digit_timestamp = None;
             if let Some(ref mut pbc) = self.pbc {
                 next_action = pbc.select_number(val)?;
+            }
+            if next_action.is_none() && val >= 1 && val <= self.tracks.len() {
+                if !matches!(self.pbc.as_ref().map(|p| &p.state), Some(crate::vcd::PbcState::InSelection { .. })) {
+                    self.play_track(val - 1).map_err(|e| e.to_string())?;
+                    return Ok(());
+                }
             }
         } else if let Some(ref mut pbc) = self.pbc {
             next_action = pbc.press_default();
@@ -1264,6 +1284,7 @@ impl VcdKernel {
         if track_idx >= self.tracks.len() {
             return Ok(false);
         }
+        self.track_play_counter = self.track_play_counter.wrapping_add(1);
         let track = &self.tracks[track_idx];
         let fname = track.file_name.clone();
         self.current_track_index = Some(track_idx);
@@ -1728,4 +1749,17 @@ fn find_file_on_disc(disc_root: &Path, filename: &str) -> Option<PathBuf> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_track_play_counter_lifecycle() {
+        let mut kernel = VcdKernel::new();
+        assert_eq!(kernel.track_play_counter, 0);
+        kernel.track_play_counter = kernel.track_play_counter.wrapping_add(1);
+        assert_eq!(kernel.track_play_counter, 1);
+    }
 }

@@ -582,5 +582,26 @@ fn test_track_numeric_keypad_during_playback() {
         "Expected AVSEQ01, got {}",
         kernel.active_video.as_ref().unwrap().filename
     );
+
+    // Same track re-entry: while playing Track 1 (or 12), re-entering the same double digit track
+    // must increment track_play_counter and clear the digit buffer.
+    // First switch to Track 12:
+    kernel.handle_pbc_digit(1).expect("digit 1");
+    kernel.handle_pbc_digit(2).expect("digit 2");
+    assert!(kernel.pbc_digit_buffer.is_empty());
+    assert!(kernel.active_video.as_ref().unwrap().filename.contains("AVSEQ12"));
+
+    // Now re-enter Track 12 while already playing Track 12
+    let counter_before = kernel.track_play_counter;
+    kernel.handle_pbc_digit(1).expect("re-enter digit 1");
+    assert_eq!(kernel.pbc_digit_buffer, vec![1]);
+    kernel.handle_pbc_digit(2).expect("re-enter digit 2");
+    assert!(kernel.pbc_digit_buffer.is_empty(), "Buffer must be empty after 2nd digit");
+    assert_eq!(kernel.track_play_counter, counter_before + 1, "Track play counter must increment");
+    assert!(
+        kernel.active_video.as_ref().unwrap().filename.contains("AVSEQ12"),
+        "Expected AVSEQ12 to be restarted, got {}",
+        kernel.active_video.as_ref().unwrap().filename
+    );
 }
 

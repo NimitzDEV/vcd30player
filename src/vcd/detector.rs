@@ -87,6 +87,20 @@ impl fmt::Display for VcdDiscType {
 }
 
 impl VcdDiscType {
+    /// Returns the concise, pure English version label (e.g. "VCD 3.0", "VCD 2.0", "VCD 1.1", "VCD 1.0", "SVCD").
+    pub fn version_label(&self) -> &'static str {
+        match self {
+            VcdDiscType::Vcd30Interactive { .. } => "VCD 3.0",
+            VcdDiscType::Vcd20WithPbc { .. } | VcdDiscType::Vcd20Linear { .. } => "VCD 2.0",
+            VcdDiscType::Vcd11 { .. } => "VCD 1.1",
+            VcdDiscType::Vcd10 => "VCD 1.0",
+            VcdDiscType::SuperVcd => "SVCD",
+            VcdDiscType::HqVcd => "HQ-VCD",
+            VcdDiscType::RawVideoDisc { .. } => "VIDEO CD",
+            VcdDiscType::Unknown => "UNKNOWN DISC",
+        }
+    }
+
     /// Returns true if this disc format supports VCD 3.0 Interactive mode.
     pub fn supports_vcd30(&self) -> bool {
         matches!(self, VcdDiscType::Vcd30Interactive { .. })
@@ -276,6 +290,43 @@ mod tests {
 
         let t9 = VcdDiscType::Unknown;
         assert_eq!(t9.to_string(), "未知光盘格式");
+    }
+
+    #[test]
+    fn test_version_label() {
+        let t1 = VcdDiscType::Vcd30Interactive {
+            version_str: "3.0".to_string(),
+            has_vcd20_layer: true,
+            entry_count: 27,
+        };
+        assert_eq!(t1.version_label(), "VCD 3.0");
+
+        let t2 = VcdDiscType::Vcd20WithPbc {
+            entry_count: 10,
+            segment_count: 5,
+        };
+        assert_eq!(t2.version_label(), "VCD 2.0");
+
+        let t3 = VcdDiscType::Vcd20Linear { entry_count: 4 };
+        assert_eq!(t3.version_label(), "VCD 2.0");
+
+        let t4 = VcdDiscType::Vcd11 { entry_count: 2 };
+        assert_eq!(t4.version_label(), "VCD 1.1");
+
+        let t5 = VcdDiscType::Vcd10;
+        assert_eq!(t5.version_label(), "VCD 1.0");
+
+        let t6 = VcdDiscType::SuperVcd;
+        assert_eq!(t6.version_label(), "SVCD");
+
+        let t7 = VcdDiscType::HqVcd;
+        assert_eq!(t7.version_label(), "HQ-VCD");
+
+        let t8 = VcdDiscType::RawVideoDisc { video_count: 3 };
+        assert_eq!(t8.version_label(), "VIDEO CD");
+
+        let t9 = VcdDiscType::Unknown;
+        assert_eq!(t9.version_label(), "UNKNOWN DISC");
     }
 
     #[test]

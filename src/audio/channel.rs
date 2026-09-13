@@ -45,6 +45,15 @@ impl AudioChannelMode {
         }
     }
 
+    /// Translation key for i18n localization.
+    pub fn i18n_key(&self) -> &'static str {
+        match self {
+            AudioChannelMode::Stereo => "controls.channel_stereo",
+            AudioChannelMode::LeftOnly => "controls.channel_left",
+            AudioChannelMode::RightOnly => "controls.channel_right",
+        }
+    }
+
     /// In-place channel mixing on interleaved 2-channel samples [L0, R0, L1, R1, ...].
     /// - Stereo: no-op
     /// - LeftOnly: duplicate Left channel to Right channel

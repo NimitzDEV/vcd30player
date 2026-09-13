@@ -335,6 +335,15 @@ impl PlaybackMode {
             PlaybackMode::SingleRepeat => "单曲循环",
         }
     }
+
+    /// Translation key for i18n localization.
+    pub fn i18n_key(&self) -> &'static str {
+        match self {
+            PlaybackMode::Sequential => "controls.repeat_sequential",
+            PlaybackMode::ListRepeat => "controls.repeat_list",
+            PlaybackMode::SingleRepeat => "controls.repeat_single",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -351,6 +360,14 @@ impl ActiveDiscMode {
             ActiveDiscMode::Vcd30Interactive => "VCD 3.0 互动模式",
             ActiveDiscMode::Vcd20Classic => "VCD 2.0 经典模式",
             ActiveDiscMode::Vcd10Linear => "VCD 1.0 纯视频模式",
+        }
+    }
+
+    pub fn i18n_key(&self) -> &'static str {
+        match self {
+            ActiveDiscMode::Vcd30Interactive => "mode.vcd30",
+            ActiveDiscMode::Vcd20Classic => "mode.vcd20",
+            ActiveDiscMode::Vcd10Linear => "mode.vcd10",
         }
     }
 }

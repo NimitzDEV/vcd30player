@@ -9,8 +9,9 @@ pub fn show_unrecognized_instruction_dialog(
     alert: &UnrecognizedInstruction,
     on_skip: &mut bool,
     on_terminate: &mut bool,
+    i18n: &crate::i18n::I18nManager,
 ) {
-    egui::Window::new("⚠️ 未识别的 VCDSCRIPT 指令")
+    egui::Window::new(i18n.t("alert.window_title"))
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, Vec2::new(0.0, 0.0))
@@ -18,7 +19,7 @@ pub fn show_unrecognized_instruction_dialog(
         .show(ctx, |ui| {
             ui.add_space(8.0);
             ui.label(
-                RichText::new("脚本解释器在执行交互指令时遇到了未识别或未支持的语句：")
+                RichText::new(i18n.t("alert.desc"))
                     .color(Color32::from_rgb(255, 200, 100))
                     .size(14.0),
             );
@@ -29,12 +30,12 @@ pub fn show_unrecognized_instruction_dialog(
                 .fill(Color32::from_rgb(30, 30, 35))
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("目标行号:").strong());
-                        ui.label(RichText::new(format!("第 {} 行", alert.line_no)).color(Color32::LIGHT_BLUE));
+                        let line_str = alert.line_no.to_string();
+                        ui.label(RichText::new(i18n.t_fmt("alert.line_no", &[&line_str])).strong().color(Color32::LIGHT_BLUE));
                     });
 
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("原始指令:").strong());
+                        ui.label(RichText::new(i18n.t("alert.raw_code")).strong());
                         ui.label(
                             RichText::new(&alert.raw_code)
                                 .monospace()
@@ -43,7 +44,7 @@ pub fn show_unrecognized_instruction_dialog(
                     });
 
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("诊断原因:").strong());
+                        ui.label(RichText::new(i18n.t("alert.reason")).strong());
                         ui.label(RichText::new(&alert.reason).color(Color32::LIGHT_GRAY));
                     });
                 });
@@ -53,7 +54,7 @@ pub fn show_unrecognized_instruction_dialog(
             ui.horizontal(|ui| {
                 if ui
                     .button(
-                        RichText::new("⏩ 跳过并继续执行")
+                        RichText::new(i18n.t("alert.skip"))
                             .color(Color32::WHITE)
                             .strong(),
                     )
@@ -66,7 +67,7 @@ pub fn show_unrecognized_instruction_dialog(
 
                 if ui
                     .button(
-                        RichText::new("⏹ 终止脚本执行")
+                        RichText::new(i18n.t("alert.terminate"))
                             .color(Color32::from_rgb(255, 120, 120))
                             .strong(),
                     )
@@ -85,11 +86,12 @@ pub fn show_about_dialog(
     ctx: &egui::Context,
     open: &mut bool,
     updater: &mut crate::updater::UpdateManager,
+    i18n: &crate::i18n::I18nManager,
 ) {
     let mut is_open = *open;
     let mut close_clicked = false;
 
-    egui::Window::new("ℹ 关于 VCD 3.0 Player")
+    egui::Window::new(i18n.t("about.window_title"))
         .open(&mut is_open)
         .collapsible(false)
         .resizable(false)
@@ -103,13 +105,13 @@ pub fn show_about_dialog(
                 ui.label(RichText::new("💿").size(28.0));
                 ui.vertical(|ui| {
                     ui.label(
-                        RichText::new("VCD 3.0 Player")
+                        RichText::new(i18n.t("about.app_title"))
                             .size(18.0)
                             .strong()
                             .color(Color32::WHITE),
                     );
                     ui.label(
-                        RichText::new(format!("版本: v{}", env!("CARGO_PKG_VERSION")))
+                        RichText::new(format!("{} v{}", i18n.t("about.version"), env!("CARGO_PKG_VERSION")))
                             .size(12.0)
                             .color(Color32::LIGHT_GRAY),
                     );
@@ -118,7 +120,7 @@ pub fn show_about_dialog(
 
             ui.add_space(4.0);
             ui.label(
-                RichText::new("现代化跨平台 VCD 3.0 交互式多媒体播放器")
+                RichText::new(i18n.t("about.subtitle"))
                     .size(13.0)
                     .color(Color32::from_rgb(200, 205, 215)),
             );
@@ -135,11 +137,7 @@ pub fn show_about_dialog(
                         .num_columns(2)
                         .spacing([12.0, 8.0])
                         .show(ui, |ui| {
-                            ui.label(RichText::new("软件名称:").strong().color(Color32::LIGHT_GRAY));
-                            ui.label(RichText::new("VCD 3.0 Player (vcd30_player)").strong());
-                            ui.end_row();
-
-                            ui.label(RichText::new("软件作者:").strong().color(Color32::LIGHT_GRAY));
+                            ui.label(RichText::new(i18n.t("about.author")).strong().color(Color32::LIGHT_GRAY));
                             ui.label(
                                 RichText::new("NimitzDEV")
                                     .color(Color32::from_rgb(100, 200, 255))
@@ -147,21 +145,21 @@ pub fn show_about_dialog(
                             );
                             ui.end_row();
 
-                            ui.label(RichText::new("GitHub 地址:").strong().color(Color32::LIGHT_GRAY));
+                            ui.label(RichText::new(i18n.t("about.github_repo")).strong().color(Color32::LIGHT_GRAY));
                             ui.hyperlink_to(
                                 "https://github.com/NimitzDEV/vcd30player",
                                 "https://github.com/NimitzDEV/vcd30player",
                             );
                             ui.end_row();
 
-                            ui.label(RichText::new("提交 Issue:").strong().color(Color32::LIGHT_GRAY));
+                            ui.label(RichText::new(i18n.t("about.issues")).strong().color(Color32::LIGHT_GRAY));
                             ui.hyperlink_to(
                                 "https://github.com/NimitzDEV/vcd30player/issues",
                                 "https://github.com/NimitzDEV/vcd30player/issues",
                             );
                             ui.end_row();
 
-                            ui.label(RichText::new("开源许可:").strong().color(Color32::LIGHT_GRAY));
+                            ui.label(RichText::new(i18n.t("about.license")).strong().color(Color32::LIGHT_GRAY));
                             ui.label(RichText::new("MIT OR Apache-2.0").color(Color32::GRAY));
                             ui.end_row();
                         });
@@ -178,30 +176,30 @@ pub fn show_about_dialog(
                 // Left: Update status
                 match &check_status {
                     crate::updater::UpdateCheckStatus::Idle => {
-                        ui.label(RichText::new("未检查更新").color(Color32::from_rgb(160, 160, 160)));
+                        ui.label(RichText::new(i18n.t("about.status_label")).color(Color32::from_rgb(160, 160, 160)));
                     }
                     crate::updater::UpdateCheckStatus::Checking => {
                         ui.spinner();
                         ui.label(
-                            RichText::new("正在检查更新...").color(Color32::from_rgb(100, 200, 255)),
+                            RichText::new(i18n.t("about.checking")).color(Color32::from_rgb(100, 200, 255)),
                         );
                     }
                     crate::updater::UpdateCheckStatus::UpToDate => {
                         ui.label(
-                            RichText::new(format!("已是最新版本 (v{})", env!("CARGO_PKG_VERSION")))
+                            RichText::new(i18n.t("about.latest"))
                                 .color(Color32::from_rgb(120, 220, 120)),
                         );
                     }
                     crate::updater::UpdateCheckStatus::UpdateAvailable(info) => {
                         ui.label(
-                            RichText::new(format!("可更新到 v{}", info.version))
+                            RichText::new(i18n.t_fmt("about.new_version", &[&info.version]))
                                 .color(Color32::from_rgb(255, 180, 50))
                                 .strong(),
                         );
                     }
                     crate::updater::UpdateCheckStatus::CheckFailed(err) => {
                         ui.label(
-                            RichText::new("检查更新失败").color(Color32::from_rgb(255, 100, 100)),
+                            RichText::new(i18n.t_fmt("about.update_failed", &[err])).color(Color32::from_rgb(255, 100, 100)),
                         )
                         .on_hover_text(err);
                     }
@@ -214,7 +212,7 @@ pub fn show_about_dialog(
                             if ui
                                 .add(
                                     egui::Button::new(
-                                        RichText::new("查看详情")
+                                        RichText::new(i18n.t("about.view_update_btn"))
                                             .color(Color32::WHITE)
                                             .strong(),
                                     )
@@ -229,12 +227,12 @@ pub fn show_about_dialog(
                         crate::updater::UpdateCheckStatus::Checking => {
                             ui.add_enabled(
                                 false,
-                                egui::Button::new("检查中...").min_size(Vec2::new(75.0, 22.0)),
+                                egui::Button::new("...").min_size(Vec2::new(75.0, 22.0)),
                             );
                         }
                         _ => {
                             if ui
-                                .add(egui::Button::new("检查更新").min_size(Vec2::new(75.0, 22.0)))
+                                .add(egui::Button::new(i18n.t("about.check_btn")).min_size(Vec2::new(75.0, 22.0)))
                                 .clicked()
                             {
                                 updater.check_for_updates();
@@ -252,7 +250,7 @@ pub fn show_about_dialog(
             ui.horizontal(|ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
-                        .add(egui::Button::new(RichText::new("关闭").strong()).min_size(Vec2::new(70.0, 24.0)))
+                        .add(egui::Button::new(RichText::new(i18n.t("about.close")).strong()).min_size(Vec2::new(70.0, 24.0)))
                         .clicked()
                     {
                         close_clicked = true;
@@ -569,3 +567,138 @@ pub fn show_update_details_dialog(
 
     updater.show_details_window = is_open;
 }
+
+/// Displays the Settings modal dialog for configuring application preferences (e.g., interface language).
+pub fn show_settings_dialog(
+    ctx: &egui::Context,
+    open: &mut bool,
+    i18n: &mut crate::i18n::I18nManager,
+) {
+    let mut is_open = *open;
+    let mut close_clicked = false;
+
+    let window_width = if i18n.active_locale().starts_with("zh") { 300.0 } else { 360.0 };
+
+    egui::Window::new(format!("⚙ {}", i18n.t("settings.title")))
+        .id(egui::Id::new("vcd30_settings_modal_window"))
+        .open(&mut is_open)
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+        .fixed_size(Vec2::new(window_width, 75.0))
+        .show(ctx, |ui| {
+            ui.add_space(2.0);
+
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(i18n.t("settings.language_section")).strong());
+
+                let current_lang = i18n.selected_language().to_string();
+                let current_display = if current_lang == "auto" {
+                    format!("🌐 {} ({})", i18n.t("settings.language_auto"), i18n.resolved_locale_name())
+                } else if let Some((_, name)) = i18n.available_locales().iter().find(|(k, _)| k == &current_lang) {
+                    name.clone()
+                } else {
+                    current_lang.clone()
+                };
+
+                let mut selected_changed = None;
+                let combo_w = (ui.available_width() - 4.0).max(140.0);
+
+                egui::ComboBox::from_id_salt("settings_lang_combo")
+                    .selected_text(&current_display)
+                    .width(combo_w)
+                    .show_ui(ui, |ui| {
+                        let auto_label = format!("🌐 {}", i18n.t("settings.language_auto"));
+                        if ui.selectable_label(current_lang == "auto", auto_label).clicked() {
+                            selected_changed = Some("auto".to_string());
+                        }
+
+                        ui.separator();
+
+                        for (locale_id, name) in i18n.available_locales() {
+                            let is_selected = current_lang == *locale_id;
+                            if ui.selectable_label(is_selected, name).clicked() {
+                                selected_changed = Some(locale_id.clone());
+                            }
+                        }
+                    });
+
+                if let Some(new_lang) = selected_changed {
+                    i18n.set_language(new_lang);
+                    ctx.request_repaint();
+                }
+            });
+
+            ui.add_space(6.0);
+            ui.separator();
+            ui.add_space(4.0);
+
+            // Bottom row: Close button wrapped in ui.horizontal to prevent layout height inflation
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .add(egui::Button::new(RichText::new(i18n.t("settings.close")).strong()).min_size(Vec2::new(60.0, 22.0)))
+                        .clicked()
+                    {
+                        close_clicked = true;
+                    }
+                });
+            });
+
+            ui.add_space(2.0);
+        });
+
+    if close_clicked {
+        is_open = false;
+    }
+    *open = is_open;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_settings_dialog_rendering_and_language_switch() {
+        let ctx = egui::Context::default();
+        let mut open = true;
+        let mut i18n = crate::i18n::I18nManager::new();
+        i18n.set_language("zh-CN".to_string());
+
+        let mut input = egui::RawInput::default();
+        input.screen_rect = Some(egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(800.0, 600.0)));
+
+        let step = |ctx: &egui::Context, open: &mut bool, i18n: &mut crate::i18n::I18nManager| -> egui::FullOutput {
+            let mut out = ctx.run_ui(input.clone(), |ctx| {
+                show_settings_dialog(ctx, open, i18n);
+            });
+            out.textures_delta.clear();
+            out
+        };
+
+        // Chinese layout & render (2 frames for egui window positioning)
+        let _ = step(&ctx, &mut open, &mut i18n);
+        let _ = step(&ctx, &mut open, &mut i18n);
+        let rect_zh = ctx.memory(|mem| mem.area_rect(egui::Id::new("vcd30_settings_modal_window"))).unwrap();
+
+        // Switch to English
+        i18n.set_language("en-US".to_string());
+
+        // English layout & render (2 frames)
+        let _ = step(&ctx, &mut open, &mut i18n);
+        let _ = step(&ctx, &mut open, &mut i18n);
+        let rect_en = ctx.memory(|mem| mem.area_rect(egui::Id::new("vcd30_settings_modal_window"))).unwrap();
+
+        assert_eq!(rect_zh.width(), 300.0);
+        assert_eq!(rect_en.width(), 360.0);
+        assert!(rect_en.width() > rect_zh.width());
+
+        // Switch back to Chinese
+        i18n.set_language("zh-CN".to_string());
+        let _ = step(&ctx, &mut open, &mut i18n);
+        let _ = step(&ctx, &mut open, &mut i18n);
+        let rect_zh2 = ctx.memory(|mem| mem.area_rect(egui::Id::new("vcd30_settings_modal_window"))).unwrap();
+        assert_eq!(rect_zh2.width(), 300.0);
+    }
+}
+

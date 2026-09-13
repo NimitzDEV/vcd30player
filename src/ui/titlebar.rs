@@ -3,8 +3,13 @@ use eframe::egui::{
 };
 use egui::viewport::{ResizeDirection, ViewportCommand};
 
-/// Renders the custom window title bar with centered title and matching single toolbar height.
-pub fn show_title_bar(ui: &mut egui::Ui, title: &str) {
+/// Renders the custom window title bar with centered title, window controls, and settings button.
+pub fn show_title_bar(
+    ui: &mut egui::Ui,
+    title: &str,
+    i18n: &crate::i18n::I18nManager,
+    on_settings: &mut bool,
+) {
     let ctx = ui.ctx().clone();
     let is_maximized = ctx.input(|i| i.viewport().maximized).unwrap_or(false);
 
@@ -24,28 +29,33 @@ pub fn show_title_bar(ui: &mut egui::Ui, title: &str) {
                 Vec2::new(ui.available_width(), titlebar_height),
             );
 
-            // Right side: Window Control Buttons (Min, Max/Restore, Close)
+            // Right side: Window Control Buttons (Close, Max/Restore, Min, Settings)
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
 
                 // Close Button
-                if title_bar_button(ui, TitleButtonType::Close, "关闭 (Alt+F4)").clicked() {
+                if title_bar_button(ui, TitleButtonType::Close, i18n.t("titlebar.close")).clicked() {
                     ctx.send_viewport_cmd(ViewportCommand::Close);
                 }
 
                 // Maximize / Restore Button
                 let (max_btn, max_tooltip) = if is_maximized {
-                    (TitleButtonType::Restore, "向下还原")
+                    (TitleButtonType::Restore, i18n.t("titlebar.restore"))
                 } else {
-                    (TitleButtonType::Maximize, "最大化")
+                    (TitleButtonType::Maximize, i18n.t("titlebar.maximize"))
                 };
                 if title_bar_button(ui, max_btn, max_tooltip).clicked() {
                     ctx.send_viewport_cmd(ViewportCommand::Maximized(!is_maximized));
                 }
 
                 // Minimize Button
-                if title_bar_button(ui, TitleButtonType::Minimize, "最小化").clicked() {
+                if title_bar_button(ui, TitleButtonType::Minimize, i18n.t("titlebar.minimize")).clicked() {
                     ctx.send_viewport_cmd(ViewportCommand::Minimized(true));
+                }
+
+                // Settings Button (Placed immediately before Minimize in visual order)
+                if title_bar_button(ui, TitleButtonType::Settings, i18n.t("titlebar.settings")).clicked() {
+                    *on_settings = true;
                 }
 
                 // Middle/Drag area takes all remaining width to the left of the control buttons
@@ -88,6 +98,7 @@ pub fn show_title_bar(ui: &mut egui::Ui, title: &str) {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum TitleButtonType {
+    Settings,
     Minimize,
     Maximize,
     Restore,
@@ -140,6 +151,18 @@ fn title_bar_button(
         let center = rect.center();
 
         match btn_type {
+            TitleButtonType::Settings => {
+                // Crisp vector-drawn gear icon: central circle and 8 radial teeth
+                ui.painter().circle_stroke(center, 2.3, stroke);
+                for i in 0..8 {
+                    let angle = (i as f32) * (std::f32::consts::PI / 4.0);
+                    let dir = Vec2::new(angle.cos(), angle.sin());
+                    ui.painter().line_segment(
+                        [center + dir * 3.1, center + dir * 5.1],
+                        stroke,
+                    );
+                }
+            }
             TitleButtonType::Minimize => {
                 // Horizontal line: 9px wide
                 ui.painter().line_segment(

@@ -21,12 +21,15 @@ pub struct VcdPlayerApp {
     pub show_metadata: bool,
     pub show_remote: bool,
     pub show_about: bool,
+    pub show_settings: bool,
+    pub i18n: crate::i18n::I18nManager,
     pub updater: crate::updater::UpdateManager,
     pub drawer_tab: DrawerTab,
     pub hovered_hotspot: Option<String>,
     pub status_message: String,
     pub status_timestamp: Option<std::time::Instant>,
     pub idle_message: String,
+    pub is_disc_ejected: bool,
     pub osd: crate::ui::osd::OsdManager,
 }
 
@@ -114,8 +117,9 @@ impl VcdPlayerApp {
     pub fn new(cc: &eframe::CreationContext<'_>, initial_disc: Option<PathBuf>) -> Self {
         setup_custom_fonts(&cc.egui_ctx);
 
+        let i18n = crate::i18n::I18nManager::new();
         let mut kernel = VcdKernel::new();
-        let mut status = "空闲 - 请点击“加载光盘”载入 VCD 光盘".to_string();
+        let mut status = i18n.t("status.idle").to_string();
         let mut has_initial_disc = false;
 
         let mut initial_osd_ver = None;
@@ -123,14 +127,14 @@ impl VcdPlayerApp {
         if let Some(root) = initial_disc {
             if root.exists() {
                 if let Err(e) = kernel.open_disc(root.clone()) {
-                    status = format!("打开光盘失败: {}", e);
+                    status = i18n.t_fmt("status.load_failed", &[&e.to_string()]);
                 } else {
                     let disc_desc = kernel
                         .disc_type
                         .as_ref()
                         .map(|t| t.to_string())
-                        .unwrap_or_else(|| "光盘".to_string());
-                    status = format!("已加载光盘: {}", disc_desc);
+                        .unwrap_or_else(|| "VCD".to_string());
+                    status = i18n.t_fmt("status.opened", &[&disc_desc]);
                     initial_osd_ver = kernel.disc_type.as_ref().map(|t| t.version_label());
                     has_initial_disc = true;
                 }
@@ -142,6 +146,8 @@ impl VcdPlayerApp {
             osd.show(ver);
         }
 
+        let idle_message = i18n.t("status.idle").to_string();
+
         Self {
             kernel,
             texture: None,
@@ -150,6 +156,8 @@ impl VcdPlayerApp {
             show_metadata: false,
             show_remote: false,
             show_about: false,
+            show_settings: false,
+            i18n,
             updater: crate::updater::UpdateManager::new(),
             drawer_tab: DrawerTab::Remote,
             hovered_hotspot: None,
@@ -159,17 +167,20 @@ impl VcdPlayerApp {
             } else {
                 None
             },
-            idle_message: "空闲 - 请点击“加载光盘”载入 VCD 光盘".to_string(),
+            idle_message,
+            is_disc_ejected: false,
             osd,
         }
     }
 
     /// Creates an app instance wrapping an existing VcdKernel.
     pub fn from_kernel(kernel: VcdKernel) -> Self {
+        let i18n = crate::i18n::I18nManager::new();
         let mut osd = crate::ui::osd::OsdManager::new();
         if let Some(ref dt) = kernel.disc_type {
             osd.show(dt.version_label());
         }
+        let idle_message = i18n.t("status.idle").to_string();
         Self {
             kernel,
             texture: None,
@@ -178,12 +189,15 @@ impl VcdPlayerApp {
             show_metadata: false,
             show_remote: false,
             show_about: false,
+            show_settings: false,
+            i18n,
             updater: crate::updater::UpdateManager::new(),
             drawer_tab: DrawerTab::Remote,
             hovered_hotspot: None,
-            status_message: "就绪".to_string(),
+            status_message: idle_message.clone(),
             status_timestamp: None,
-            idle_message: "就绪".to_string(),
+            idle_message,
+            is_disc_ejected: false,
             osd,
         }
     }
@@ -192,6 +206,18 @@ impl VcdPlayerApp {
     pub fn set_status(&mut self, msg: impl Into<String>) {
         self.status_message = msg.into();
         self.status_timestamp = Some(std::time::Instant::now());
+    }
+
+    /// Sets a localized temporary status message.
+    pub fn set_status_i18n(&mut self, key: &str) {
+        let msg = self.i18n.t(key).to_string();
+        self.set_status(msg);
+    }
+
+    /// Sets a localized temporary status message with formatted arguments.
+    pub fn set_status_i18n_fmt(&mut self, key: &str, args: &[&str]) {
+        let msg = self.i18n.t_fmt(key, args);
+        self.set_status(msg);
     }
 
     /// Renders default status info when no transient status or hover target is active.
@@ -211,12 +237,13 @@ impl VcdPlayerApp {
                 }
             } else if let Some(idx) = self.kernel.current_track_index {
                 if let Some(t) = self.kernel.tracks.get(idx) {
-                    format!("🎵 轨道 {:02} ({})", t.index, t.title)
+                    let idx_str = format!("{:02}", t.index);
+                    self.i18n.t_fmt("status.track_info", &[&idx_str, &t.title])
                 } else {
-                    "未载入页面".to_string()
+                    self.i18n.t("status.no_page").to_string()
                 }
             } else {
-                "未载入页面".to_string()
+                self.i18n.t("status.no_page").to_string()
             };
 
             ui.label(egui::RichText::new(page_info).strong());
@@ -233,10 +260,15 @@ impl VcdPlayerApp {
                     .strong(),
                 );
             } else {
-                ui.label(egui::RichText::new("🎬 未播放视频").color(Color32::DARK_GRAY));
+                ui.label(egui::RichText::new(format!("🎬 {}", self.i18n.t("status.no_video"))).color(Color32::DARK_GRAY));
             }
         } else {
-            ui.label(egui::RichText::new(&self.idle_message).color(Color32::GRAY));
+            let msg = if self.is_disc_ejected {
+                self.i18n.t("status.disc_ejected")
+            } else {
+                self.i18n.t("status.idle")
+            };
+            ui.label(egui::RichText::new(msg).color(Color32::GRAY));
         }
     }
 
@@ -279,8 +311,9 @@ impl VcdPlayerApp {
         self.kernel.vm.terminate();
         self.texture = None;
         self.texture_dirty = true;
-        self.idle_message = "光盘已弹出，请加载光盘".to_string();
-        self.set_status("光盘已弹出，请加载光盘");
+        self.is_disc_ejected = true;
+        self.idle_message = self.i18n.t("status.disc_ejected").to_string();
+        self.set_status_i18n("status.disc_ejected");
         self.osd.show("DISC EJECT");
     }
 
@@ -311,10 +344,10 @@ impl VcdPlayerApp {
         self.osd.show("DISC RESET");
         if !self.kernel.disc_root.as_os_str().is_empty() {
             if let Err(e) = self.kernel.restart_current_mode() {
-                self.set_status(format!("重置失败: {}", e));
+                self.set_status(self.i18n.t_fmt("status.reset_failed", &[&e.to_string()]));
             } else {
-                let mode_desc = self.kernel.active_mode.label();
-                self.set_status(format!("已重新从头开始播放 ({})", mode_desc));
+                let mode_desc = self.i18n.t(self.kernel.active_mode.i18n_key());
+                self.set_status(self.i18n.t_fmt("status.reset_playback", &[mode_desc]));
                 self.texture = None;
                 self.texture_dirty = true;
                 ctx.request_repaint();
@@ -322,9 +355,9 @@ impl VcdPlayerApp {
         } else if !self.kernel.current_page_name.is_empty() {
             let page = self.kernel.current_page_name.clone();
             if let Err(e) = self.kernel.load_page(&page, false) {
-                self.set_status(format!("重置失败: {}", e));
+                self.set_status(self.i18n.t_fmt("status.reset_failed", &[&e.to_string()]));
             } else {
-                self.set_status(format!("已重置页面: {}", page));
+                self.set_status(self.i18n.t_fmt("status.reset_page", &[&page]));
                 self.texture = None;
                 self.texture_dirty = true;
                 ctx.request_repaint();
@@ -348,13 +381,14 @@ impl VcdPlayerApp {
                 .iter()
                 .map(|d| d.to_string())
                 .collect();
-            self.set_status(format!("输入曲目: {} (按 Enter 确认或等待)", buf_str));
+            self.set_status(self.i18n.t_fmt("status.input_track", &[&buf_str]));
             self.osd.show(format!("INPUT: {}_", buf_str));
         } else if self.kernel.track_play_counter != old_counter || self.kernel.current_track_index != old_track {
             if let Some(idx) = self.kernel.current_track_index {
                 let track_info = self.kernel.tracks.get(idx).map(|t| (t.index, t.title.clone()));
                 if let Some((t_idx, t_title)) = track_info {
-                    self.set_status(format!("正在播放: 轨道 {:02} ({})", t_idx, t_title));
+                    let idx_str = format!("{:02}", t_idx);
+                    self.set_status(self.i18n.t_fmt("status.playing_track", &[&idx_str, &t_title]));
                     if (0..=9).contains(&key) || key == 31 {
                         self.osd.show(format!("SELECT: TRK {:02}", t_idx));
                     } else if key == 34 || key == 36 {
@@ -367,12 +401,13 @@ impl VcdPlayerApp {
                 }
             }
         } else if self.kernel.current_page_name != old_page && !self.kernel.current_page_name.is_empty() {
-            self.set_status(format!("已切换至: {}", self.kernel.current_page_name));
+            self.set_status(self.i18n.t_fmt("status.page_loaded", &[&self.kernel.current_page_name]));
         } else if was_buffering {
             if let Some(idx) = self.kernel.current_track_index {
                 let track_info = self.kernel.tracks.get(idx).map(|t| (t.index, t.title.clone()));
                 if let Some((t_idx, t_title)) = track_info {
-                    self.set_status(format!("正在播放: 轨道 {:02} ({})", t_idx, t_title));
+                    let idx_str = format!("{:02}", t_idx);
+                    self.set_status(self.i18n.t_fmt("status.playing_track", &[&idx_str, &t_title]));
                     self.osd.show(format!("SELECT: TRK {:02}", t_idx));
                 }
             }
@@ -461,7 +496,8 @@ impl VcdPlayerApp {
             if let Some(idx) = self.kernel.current_track_index {
                 let track_info = self.kernel.tracks.get(idx).map(|t| (t.index, t.title.clone()));
                 if let Some((t_idx, t_title)) = track_info {
-                    self.set_status(format!("正在播放: 轨道 {:02} ({})", t_idx, t_title));
+                    let track_num = format!("{:02}", t_idx);
+                    self.set_status(self.i18n.t_fmt("status.playing_track", &[&track_num, &t_title]));
                     self.osd.show(format!("SELECT: TRK {:02}", t_idx));
                 }
             }
@@ -512,14 +548,15 @@ impl VcdPlayerApp {
             }
         } else if let Some(idx) = self.kernel.current_track_index {
             if let Some(t) = self.kernel.tracks.get(idx) {
-                format!("vcd30player - 轨道 {:02} ({})", t.index, t.title)
+                let idx_str = format!("{:02}", t.index);
+                self.i18n.t_fmt("titlebar.track_title", &[&idx_str, &t.title])
             } else {
-                "vcd30player".to_string()
+                self.i18n.t("titlebar.default_title").to_string()
             }
         } else {
-            "vcd30player".to_string()
+            self.i18n.t("titlebar.default_title").to_string()
         };
-        crate::ui::titlebar::show_title_bar(ui, &window_title);
+        crate::ui::titlebar::show_title_bar(ui, &window_title, &self.i18n, &mut self.show_settings);
 
         // Bottom Control & Status Panel
         egui::Panel::bottom("bottom_bar").show(ui, |ui| {
@@ -535,18 +572,19 @@ impl VcdPlayerApp {
                         ui.spacing_mut().item_spacing.x = 0.0;
 
                         let left_cr = egui::CornerRadius { nw: 4, ne: 0, sw: 4, se: 0 };
-                        if ui.add(egui::Button::new("📁 加载光盘").corner_radius(left_cr)).clicked() {
+                        if ui.add(egui::Button::new(self.i18n.t("controls.load_disc")).corner_radius(left_cr)).clicked() {
                             if let Some(folder) = rfd::FileDialog::new().pick_folder() {
                                 if let Err(e) = self.kernel.open_disc(folder.clone()) {
-                                    self.set_status(format!("打开失败: {}", e));
+                                    self.set_status(self.i18n.t_fmt("status.load_failed", &[&e.to_string()]));
                                 } else {
+                                    self.is_disc_ejected = false;
                                     let disc_desc = self
                                         .kernel
                                         .disc_type
                                         .as_ref()
                                         .map(|t| t.to_string())
-                                        .unwrap_or_else(|| "光盘".to_string());
-                                    self.set_status(format!("已打开: {}", disc_desc));
+                                        .unwrap_or_else(|| "VCD".to_string());
+                                    self.set_status(self.i18n.t_fmt("status.opened", &[&disc_desc]));
                                     let ver_label = self
                                         .kernel
                                         .disc_type
@@ -570,7 +608,7 @@ impl VcdPlayerApp {
                         ui.menu_button("▼", |ui| {
                             ui.visuals_mut().widgets.inactive.corner_radius = egui::CornerRadius::same(3);
                             ui.visuals_mut().widgets.hovered.corner_radius = egui::CornerRadius::same(3);
-                            if ui.button("📄 加载CHM...").clicked() {
+                            if ui.button(self.i18n.t("controls.load_chm")).clicked() {
                                 ui.close();
                                 if let Some(file) = rfd::FileDialog::new()
                                     .add_filter("VCD30 Compiled HTML", &["chm", "CHM"])
@@ -587,9 +625,10 @@ impl VcdPlayerApp {
                                     }
                                     if let Some(name) = file.file_name().and_then(|s| s.to_str()) {
                                         if let Err(e) = self.kernel.load_page(name, true) {
-                                            self.set_status(format!("加载页面失败: {}", e));
+                                            self.set_status(self.i18n.t_fmt("status.page_load_failed", &[&e.to_string()]));
                                         } else {
-                                            self.set_status(format!("已加载: {}", name));
+                                            self.is_disc_ejected = false;
+                                            self.set_status(self.i18n.t_fmt("status.page_loaded", &[name]));
                                             self.texture = None;
                                             self.texture_dirty = true;
                                             ctx.request_repaint();
@@ -600,7 +639,7 @@ impl VcdPlayerApp {
                         });
                     });
                 } else {
-                    if ui.button("⏏ 弹出光盘").clicked() {
+                    if ui.button(self.i18n.t("controls.eject_disc")).clicked() {
                         self.eject_disc();
                         ctx.request_repaint();
                     }
@@ -614,8 +653,8 @@ impl VcdPlayerApp {
 
                     let left_cr = egui::CornerRadius { nw: 4, ne: 0, sw: 4, se: 0 };
                     if ui
-                        .add_enabled(is_loaded, egui::Button::new("↺ 重置").corner_radius(left_cr))
-                        .on_hover_text("从头开始重新播放当前模式")
+                        .add_enabled(is_loaded, egui::Button::new(self.i18n.t("controls.reset")).corner_radius(left_cr))
+                        .on_hover_text(self.i18n.t("controls.reset_tooltip"))
                         .clicked()
                     {
                         self.reset_disc(&ctx);
@@ -640,12 +679,12 @@ impl VcdPlayerApp {
 
                             if supports_vcd30 && cur_mode != crate::core::kernel::ActiveDiscMode::Vcd30Interactive {
                                 option_count += 1;
-                                if ui.button("💿 重置并恢复 VCD 3.0 互动模式").clicked() {
+                                if ui.button(self.i18n.t("controls.mode_reset_vcd30")).clicked() {
                                     ui.close();
                                     if let Err(e) = self.kernel.switch_active_mode(crate::core::kernel::ActiveDiscMode::Vcd30Interactive) {
-                                        self.set_status(format!("恢复失败: {}", e));
+                                        self.set_status_i18n_fmt("status.mode_switch_failed", &[&e.to_string()]);
                                     } else {
-                                        self.set_status("已恢复 VCD 3.0 互动模式");
+                                        self.set_status_i18n("status.mode_restored_vcd30");
                                         self.osd.show("MODE: VCD 3.0");
                                         self.texture = None;
                                         self.texture_dirty = true;
@@ -657,16 +696,16 @@ impl VcdPlayerApp {
                             if supports_vcd20 && cur_mode != crate::core::kernel::ActiveDiscMode::Vcd20Classic {
                                 option_count += 1;
                                 let label = if cur_mode == crate::core::kernel::ActiveDiscMode::Vcd10Linear && !supports_vcd30 {
-                                    "🎬 重置并恢复 VCD 2.0 经典模式"
+                                    self.i18n.t("controls.mode_reset_vcd20_restore")
                                 } else {
-                                    "🎬 重置并使用 VCD 2.0 模式播放"
+                                    self.i18n.t("controls.mode_reset_vcd20_play")
                                 };
                                 if ui.button(label).clicked() {
                                     ui.close();
                                     if let Err(e) = self.kernel.switch_active_mode(crate::core::kernel::ActiveDiscMode::Vcd20Classic) {
-                                        self.set_status(format!("切换失败: {}", e));
+                                        self.set_status_i18n_fmt("status.mode_switch_failed", &[&e.to_string()]);
                                     } else {
-                                        self.set_status("已切换至 VCD 2.0 经典模式");
+                                        self.set_status_i18n("status.mode_switched_vcd20");
                                         self.osd.show("MODE: VCD 2.0");
                                         self.texture = None;
                                         self.texture_dirty = true;
@@ -677,12 +716,12 @@ impl VcdPlayerApp {
 
                             if supports_vcd10 && cur_mode != crate::core::kernel::ActiveDiscMode::Vcd10Linear {
                                 option_count += 1;
-                                if ui.button("📺 重置并使用 VCD 1.0 模式播放").clicked() {
+                                if ui.button(self.i18n.t("controls.mode_reset_vcd10")).clicked() {
                                     ui.close();
                                     if let Err(e) = self.kernel.switch_active_mode(crate::core::kernel::ActiveDiscMode::Vcd10Linear) {
-                                        self.set_status(format!("切换失败: {}", e));
+                                        self.set_status_i18n_fmt("status.mode_switch_failed", &[&e.to_string()]);
                                     } else {
-                                        self.set_status("已切换至 VCD 1.0 纯视频模式");
+                                        self.set_status_i18n("status.mode_switched_vcd10");
                                         self.osd.show("MODE: VCD 1.0");
                                         self.texture = None;
                                         self.texture_dirty = true;
@@ -692,7 +731,7 @@ impl VcdPlayerApp {
                             }
 
                             if option_count == 0 {
-                                ui.label("当前已是唯一的可用模式");
+                                ui.label(self.i18n.t("controls.mode_only_available"));
                             }
                         });
                     });
@@ -711,7 +750,7 @@ impl VcdPlayerApp {
                     let has_tracks = !self.kernel.tracks.is_empty();
                     if ui
                         .add_enabled(has_tracks, egui::Button::new("⏮"))
-                        .on_hover_text("上一曲")
+                        .on_hover_text(self.i18n.t("controls.prev_track"))
                         .clicked()
                     {
                         prev_track = true;
@@ -721,9 +760,9 @@ impl VcdPlayerApp {
                 if let Some(ref mut player) = self.kernel.active_video {
                     let is_playing = player.is_playing();
                     let (play_icon, play_tooltip) = if is_playing {
-                        ("⏸", "暂停 (Space)")
+                        ("⏸", self.i18n.t("controls.pause"))
                     } else {
-                        ("▶", "播放 (Space)")
+                        ("▶", self.i18n.t("controls.play"))
                     };
                     if ui.button(play_icon).on_hover_text(play_tooltip).clicked() {
                         player.toggle_play_pause();
@@ -737,14 +776,15 @@ impl VcdPlayerApp {
                     let can_start = is_vcd12 && !self.kernel.tracks.is_empty();
                     if ui
                         .add_enabled(can_start, egui::Button::new("▶"))
-                        .on_hover_text("播放 (Space)")
+                        .on_hover_text(self.i18n.t("controls.play"))
                         .clicked()
                     {
                         let idx = self.kernel.current_track_index.unwrap_or(0);
                         let _ = self.kernel.play_track(idx);
                         let track_info = self.kernel.tracks.get(idx).map(|t| (t.index, t.title.clone()));
                         if let Some((t_idx, t_title)) = track_info {
-                            self.set_status(format!("正在播放: 轨道 {:02} ({})", t_idx, t_title));
+                            let idx_str = format!("{:02}", t_idx);
+                            self.set_status(self.i18n.t_fmt("status.playing_track", &[&idx_str, &t_title]));
                             self.osd.show(format!("▶ TRK {:02}", t_idx));
                         }
                         self.texture = None;
@@ -757,7 +797,7 @@ impl VcdPlayerApp {
                     let has_tracks = !self.kernel.tracks.is_empty();
                     if ui
                         .add_enabled(has_tracks, egui::Button::new("⏭"))
-                        .on_hover_text("下一曲")
+                        .on_hover_text(self.i18n.t("controls.next_track"))
                         .clicked()
                     {
                         next_track = true;
@@ -767,7 +807,7 @@ impl VcdPlayerApp {
                 let can_stop = self.kernel.active_video.is_some();
                 if ui
                     .add_enabled(can_stop, egui::Button::new("⏹"))
-                    .on_hover_text("停止 (ESC)")
+                    .on_hover_text(self.i18n.t("controls.stop"))
                     .clicked()
                 {
                     stop_video = true;
@@ -776,16 +816,14 @@ impl VcdPlayerApp {
                 // Right side: Playback Mode (icon), Channel Mode (icon), Timecode, and Slider in remaining space
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     // 1. Rightmost: Playback Mode (Icon only)
+                    let mode_desc = self.i18n.t(self.kernel.playback_mode.i18n_key());
                     let mode_btn = ui
                         .add_enabled(
                             is_loaded,
                             egui::Button::new(self.kernel.playback_mode.icon())
                                 .min_size(Vec2::new(26.0, 0.0)),
                         )
-                        .on_hover_text(format!(
-                            "播放模式: {} (点击循环切换)",
-                            self.kernel.playback_mode.description()
-                        ));
+                        .on_hover_text(self.i18n.t_fmt("controls.playback_mode_tooltip", &[mode_desc]));
                     if mode_btn.clicked() {
                         self.kernel.playback_mode = self.kernel.playback_mode.cycle();
                         let osd_label = match self.kernel.playback_mode {
@@ -794,20 +832,19 @@ impl VcdPlayerApp {
                             crate::core::kernel::PlaybackMode::SingleRepeat => "REPEAT: 1",
                         };
                         self.osd.show(osd_label);
-                        self.set_status(format!("播放模式: {}", self.kernel.playback_mode.description()));
+                        let new_desc = self.i18n.t(self.kernel.playback_mode.i18n_key());
+                        self.set_status(self.i18n.t_fmt("status.playback_mode", &[new_desc]));
                     }
 
                     // 2. Channel Mode (Icon only)
+                    let ch_desc = self.i18n.t(self.kernel.channel_mode.i18n_key());
                     let channel_btn = ui
                         .add_enabled(
                             is_loaded,
                             egui::Button::new(self.kernel.channel_mode.icon())
                                 .min_size(Vec2::new(26.0, 0.0)),
                         )
-                        .on_hover_text(format!(
-                            "声道模式: {} (点击切换)",
-                            self.kernel.channel_mode.description()
-                        ));
+                        .on_hover_text(self.i18n.t_fmt("controls.channel_tooltip", &[ch_desc]));
                     if channel_btn.clicked() {
                         self.kernel.channel_mode = self.kernel.channel_mode.cycle();
                         if let Some(ref mut player) = self.kernel.active_video {
@@ -819,7 +856,8 @@ impl VcdPlayerApp {
                             crate::audio::AudioChannelMode::RightOnly => "AUDIO: RIGHT",
                         };
                         self.osd.show(osd_label);
-                        self.set_status(format!("声道模式: {}", self.kernel.channel_mode.description()));
+                        let new_ch_desc = self.i18n.t(self.kernel.channel_mode.i18n_key());
+                        self.set_status(self.i18n.t_fmt("status.channel_mode", &[new_ch_desc]));
                     }
 
                     // Margin between timecode and channel/mode buttons
@@ -873,7 +911,8 @@ impl VcdPlayerApp {
                     if let Some(idx) = self.kernel.current_track_index {
                         let track_info = self.kernel.tracks.get(idx).map(|t| (t.index, t.title.clone()));
                         if let Some((t_idx, t_title)) = track_info {
-                            self.set_status(format!("正在播放: 轨道 {:02} ({})", t_idx, t_title));
+                            let idx_str = format!("{:02}", t_idx);
+                            self.set_status(self.i18n.t_fmt("status.playing_track", &[&idx_str, &t_title]));
                             self.osd.show(format!("⏮ TRK {:02}", t_idx));
                         }
                     }
@@ -887,7 +926,8 @@ impl VcdPlayerApp {
                     if let Some(idx) = self.kernel.current_track_index {
                         let track_info = self.kernel.tracks.get(idx).map(|t| (t.index, t.title.clone()));
                         if let Some((t_idx, t_title)) = track_info {
-                            self.set_status(format!("正在播放: 轨道 {:02} ({})", t_idx, t_title));
+                            let idx_str = format!("{:02}", t_idx);
+                            self.set_status_i18n_fmt("status.playing_track", &[&idx_str, &t_title]);
                             self.osd.show(format!("⏭ TRK {:02}", t_idx));
                         }
                     }
@@ -902,13 +942,14 @@ impl VcdPlayerApp {
                     {
                         let _ = self.kernel.handle_pbc_return();
                         if !self.kernel.current_page_name.is_empty() {
-                            self.set_status(format!("已返回: {}", self.kernel.current_page_name));
+                            let page_name = self.kernel.current_page_name.clone();
+                            self.set_status_i18n_fmt("status.returned_to", &[&page_name]);
                         } else {
-                            self.set_status("已停止视频播放");
+                            self.set_status_i18n("status.stopped_video");
                         }
                     } else {
                         let _ = self.kernel.stop_video_and_exit();
-                        self.set_status("已停止视频播放");
+                        self.set_status_i18n("status.stopped_video");
                     }
                     self.osd.show("⏹ STOP");
                     self.texture = None;
@@ -927,15 +968,16 @@ impl VcdPlayerApp {
 
                 if is_vcd20 {
                     if ui
-                        .add_enabled(is_loaded, egui::Button::new("PBC"))
-                        .on_hover_text("呼出/返回 PBC 播放控制菜单")
+                        .add_enabled(is_loaded, egui::Button::new(self.i18n.t("controls.pbc")))
+                        .on_hover_text(self.i18n.t("controls.pbc_tooltip"))
                         .clicked()
                     {
                         if let Err(e) = self.kernel.trigger_pbc_menu() {
-                            self.set_status(format!("PBC: {}", e));
+                            let err_str = e.to_string();
+                            self.set_status_i18n_fmt("status.pbc_error", &[&err_str]);
                             self.osd.show_colored(format!("PBC: {}", e), crate::ui::osd::OSD_YELLOW);
                         } else {
-                            self.set_status("已呼出 PBC 菜单");
+                            self.set_status_i18n("status.pbc_menu_opened");
                             self.osd.show("PBC: ON");
                             self.texture = None;
                             self.texture_dirty = true;
@@ -949,11 +991,12 @@ impl VcdPlayerApp {
                     let can_home = true;
 
                     if ui
-                        .add_enabled(can_back, egui::Button::new("⏮ 后退"))
+                        .add_enabled(can_back, egui::Button::new(self.i18n.t("controls.back")))
                         .clicked()
                     {
                         if let Ok(true) = self.kernel.go_back() {
-                            self.set_status(format!("已后退至: {}", self.kernel.current_page_name));
+                            let page_name = self.kernel.current_page_name.clone();
+                            self.set_status_i18n_fmt("status.back_to", &[&page_name]);
                             self.texture = None;
                             self.texture_dirty = true;
                             ctx.request_repaint();
@@ -961,12 +1004,12 @@ impl VcdPlayerApp {
                     }
 
                     if ui
-                        .add_enabled(can_home, egui::Button::new("🏠 主页"))
-                        .on_hover_text("返回主页")
+                        .add_enabled(can_home, egui::Button::new(self.i18n.t("controls.home")))
+                        .on_hover_text(self.i18n.t("controls.home_tooltip"))
                         .clicked()
                     {
                         if let Ok(()) = self.kernel.go_home() {
-                            self.set_status("已返回主页");
+                            self.set_status_i18n("status.home_to");
                             self.texture = None;
                             self.texture_dirty = true;
                             ctx.request_repaint();
@@ -974,11 +1017,12 @@ impl VcdPlayerApp {
                     }
 
                     if ui
-                        .add_enabled(can_fwd, egui::Button::new("⏭ 前进"))
+                        .add_enabled(can_fwd, egui::Button::new(self.i18n.t("controls.forward")))
                         .clicked()
                     {
                         if let Ok(true) = self.kernel.go_forward() {
-                            self.set_status(format!("已前进至: {}", self.kernel.current_page_name));
+                            let page_name = self.kernel.current_page_name.clone();
+                            self.set_status_i18n_fmt("status.forward_to", &[&page_name]);
                             self.texture = None;
                             self.texture_dirty = true;
                             ctx.request_repaint();
@@ -988,12 +1032,12 @@ impl VcdPlayerApp {
                 }
 
                 if is_vcd30 {
-                    ui.checkbox(&mut self.show_hotspots, "🎯 热区高亮");
+                    ui.checkbox(&mut self.show_hotspots, self.i18n.t("controls.hotspots"));
                 }
                 let mut show_panel = self.show_remote;
                 if ui
-                    .checkbox(&mut show_panel, "🎮 侧边面板")
-                    .on_hover_text("展开遥控器与曲目列表侧边栏")
+                    .checkbox(&mut show_panel, self.i18n.t("controls.side_panel"))
+                    .on_hover_text(self.i18n.t("controls.side_panel_tooltip"))
                     .changed()
                 {
                     self.toggle_side_panel(&ctx, show_panel);
@@ -1003,15 +1047,15 @@ impl VcdPlayerApp {
 
                 // Right side: About button on the far right, preceded by OSD mode status button
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("ℹ").on_hover_text("关于软件").clicked() {
+                    if ui.button("ℹ").on_hover_text(self.i18n.t("controls.about_tooltip")).clicked() {
                         self.show_about = true;
                     }
 
                     let osd_icon = self.osd.mode.icon();
-                    let osd_tooltip = self.osd.mode.tooltip();
+                    let osd_tooltip = self.i18n.t("controls.osd_tooltip");
                     if ui.button(osd_icon).on_hover_text(osd_tooltip).clicked() {
                         let new_mode = self.osd.toggle_mode();
-                        self.set_status(format!("OSD 模式: {}", new_mode.osd_label()));
+                        self.set_status(self.i18n.t_fmt("status.osd_mode", &[new_mode.osd_label()]));
                         ctx.request_repaint();
                     }
 
@@ -1019,7 +1063,7 @@ impl VcdPlayerApp {
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                         if let Some(target) = &self.hovered_hotspot {
                             ui.label(
-                                egui::RichText::new(format!("👉 目标: {}", target))
+                                egui::RichText::new(self.i18n.t_fmt("status.target_hotspot", &[target]))
                                     .color(Color32::from_rgb(0, 220, 255)),
                             );
                         } else if let Some(ts) = self.status_timestamp {
@@ -1061,7 +1105,7 @@ impl VcdPlayerApp {
 
         if toggle_osd {
             let new_mode = self.osd.toggle_mode();
-            self.set_status(format!("OSD 模式: {}", new_mode.osd_label()));
+            self.set_status(self.i18n.t_fmt("status.osd_mode", &[new_mode.osd_label()]));
             ctx.request_repaint();
         }
 
@@ -1076,7 +1120,8 @@ impl VcdPlayerApp {
                 crate::audio::AudioChannelMode::RightOnly => "AUDIO: RIGHT",
             };
             self.osd.show(osd_label);
-            self.set_status(format!("声道模式: {}", self.kernel.channel_mode.description()));
+            let ch_desc = self.i18n.t(self.kernel.channel_mode.i18n_key());
+            self.set_status(self.i18n.t_fmt("status.channel_mode", &[ch_desc]));
         }
 
         if toggle_repeat {
@@ -1087,7 +1132,8 @@ impl VcdPlayerApp {
                 crate::core::kernel::PlaybackMode::SingleRepeat => "REPEAT: 1",
             };
             self.osd.show(osd_label);
-            self.set_status(format!("播放模式: {}", self.kernel.playback_mode.description()));
+            let pb_desc = self.i18n.t(self.kernel.playback_mode.i18n_key());
+            self.set_status(self.i18n.t_fmt("status.playback_mode", &[pb_desc]));
         }
 
         if self.kernel.is_video_active() {
@@ -1148,7 +1194,8 @@ impl VcdPlayerApp {
                 if let Some(idx) = self.kernel.current_track_index {
                     let track_info = self.kernel.tracks.get(idx).map(|t| (t.index, t.title.clone()));
                     if let Some((t_idx, t_title)) = track_info {
-                        self.set_status(format!("正在播放: 轨道 {:02} ({})", t_idx, t_title));
+                        let idx_str = format!("{:02}", t_idx);
+                        self.set_status(self.i18n.t_fmt("status.playing_track", &[&idx_str, &t_title]));
                         self.osd.show(format!("⏮ TRK {:02}", t_idx));
                     }
                 }
@@ -1162,7 +1209,8 @@ impl VcdPlayerApp {
                 if let Some(idx) = self.kernel.current_track_index {
                     let track_info = self.kernel.tracks.get(idx).map(|t| (t.index, t.title.clone()));
                     if let Some((t_idx, t_title)) = track_info {
-                        self.set_status(format!("正在播放: 轨道 {:02} ({})", t_idx, t_title));
+                        let idx_str = format!("{:02}", t_idx);
+                        self.set_status(self.i18n.t_fmt("status.playing_track", &[&idx_str, &t_title]));
                         self.osd.show(format!("⏭ TRK {:02}", t_idx));
                     }
                 }
@@ -1261,6 +1309,7 @@ impl VcdPlayerApp {
                 &alert,
                 &mut on_skip,
                 &mut on_terminate,
+                &self.i18n,
             );
             if on_skip {
                 self.kernel.skip_alert_and_continue();
@@ -1274,7 +1323,22 @@ impl VcdPlayerApp {
         // Modal Dialog: About Window
         if self.show_about {
             self.updater.on_about_opened();
-            crate::ui::dialogs::show_about_dialog(&ctx, &mut self.show_about, &mut self.updater);
+            crate::ui::dialogs::show_about_dialog(&ctx, &mut self.show_about, &mut self.updater, &self.i18n);
+        }
+
+        // Modal Dialog: Settings Window
+        if self.show_settings {
+            let prev_locale = self.i18n.active_locale().to_string();
+            crate::ui::dialogs::show_settings_dialog(&ctx, &mut self.show_settings, &mut self.i18n);
+            if self.i18n.active_locale() != prev_locale {
+                self.status_timestamp = None;
+                self.idle_message = if self.is_disc_ejected {
+                    self.i18n.t("status.disc_ejected").to_string()
+                } else {
+                    self.i18n.t("status.idle").to_string()
+                };
+                self.status_message = self.idle_message.clone();
+            }
         }
 
         // Modal Dialog: Update Details Window
@@ -1293,17 +1357,17 @@ impl VcdPlayerApp {
 
                     // Tab Selector: Remote vs Tracks
                     ui.horizontal(|ui| {
-                        ui.selectable_value(&mut self.drawer_tab, DrawerTab::Remote, "🎮 遥控器");
+                        ui.selectable_value(&mut self.drawer_tab, DrawerTab::Remote, self.i18n.t("drawer.tab_remote"));
                         let track_count = self.kernel.tracks.len();
                         let track_title = if track_count > 0 {
-                            format!("📑 曲目 ({})", track_count)
+                            self.i18n.t_fmt("drawer.tab_tracks_count", &[&track_count.to_string()])
                         } else {
-                            "📑 曲目列表".to_string()
+                            self.i18n.t("drawer.tab_tracks").to_string()
                         };
                         ui.selectable_value(&mut self.drawer_tab, DrawerTab::Tracks, track_title);
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if close_panel_button(ui).on_hover_text("关闭侧面板").clicked() {
+                            if close_panel_button(ui).on_hover_text(self.i18n.t("drawer.close_panel_tooltip")).clicked() {
                                 close_panel = true;
                             }
                         });
@@ -1315,14 +1379,14 @@ impl VcdPlayerApp {
 
                     let audio_ok = self.kernel.audio.is_audio_available();
                     let (audio_txt, audio_color) = if audio_ok {
-                        ("🔊 音效输出正常", Color32::LIGHT_GREEN)
+                        (self.i18n.t("drawer.audio_ok"), Color32::LIGHT_GREEN)
                     } else {
-                        ("🔇 静音兼容模式", Color32::KHAKI)
+                        (self.i18n.t("drawer.audio_muted"), Color32::KHAKI)
                     };
                     ui.label(egui::RichText::new(audio_txt).color(audio_color).size(11.0));
                     ui.separator();
 
-                    ui.label(egui::RichText::new("方向控制:").strong());
+                    ui.label(egui::RichText::new(self.i18n.t("drawer.dpad_label")).strong());
                     ui.add_space(4.0);
 
                     let dpad_btn_size = Vec2::new(44.0, 30.0);
@@ -1337,7 +1401,7 @@ impl VcdPlayerApp {
                             .show(ui, |ui| {
                                 ui.label("");
                                 if ui
-                                    .add(egui::Button::new("▲ 上").min_size(dpad_btn_size))
+                                    .add(egui::Button::new(self.i18n.t("drawer.dpad_up")).min_size(dpad_btn_size))
                                     .clicked()
                                 {
                                     self.send_remote_key(34, &ctx);
@@ -1346,19 +1410,19 @@ impl VcdPlayerApp {
                                 ui.end_row();
 
                                 if ui
-                                    .add(egui::Button::new("◀ 左").min_size(dpad_btn_size))
+                                    .add(egui::Button::new(self.i18n.t("drawer.dpad_left")).min_size(dpad_btn_size))
                                     .clicked()
                                 {
                                     self.send_remote_key(36, &ctx);
                                 }
                                 if ui
-                                    .add(egui::Button::new("确定").min_size(dpad_btn_size))
+                                    .add(egui::Button::new(self.i18n.t("drawer.dpad_ok")).min_size(dpad_btn_size))
                                     .clicked()
                                 {
                                     self.send_remote_key(31, &ctx);
                                 }
                                 if ui
-                                    .add(egui::Button::new("右 ▶").min_size(dpad_btn_size))
+                                    .add(egui::Button::new(self.i18n.t("drawer.dpad_right")).min_size(dpad_btn_size))
                                     .clicked()
                                 {
                                     self.send_remote_key(37, &ctx);
@@ -1367,7 +1431,7 @@ impl VcdPlayerApp {
 
                                 ui.label("");
                                 if ui
-                                    .add(egui::Button::new("▼ 下").min_size(dpad_btn_size))
+                                    .add(egui::Button::new(self.i18n.t("drawer.dpad_down")).min_size(dpad_btn_size))
                                     .clicked()
                                 {
                                     self.send_remote_key(35, &ctx);
@@ -1382,7 +1446,7 @@ impl VcdPlayerApp {
                         ui.add_space(dpad_margin);
                         if ui
                             .add(
-                                egui::Button::new("⏹ 返回 / 退出 (32)")
+                                egui::Button::new(self.i18n.t("drawer.btn_return"))
                                     .min_size(Vec2::new(dpad_w, 28.0)),
                             )
                             .clicked()
@@ -1392,7 +1456,7 @@ impl VcdPlayerApp {
                     });
 
                     ui.separator();
-                    ui.label(egui::RichText::new("数字按键 (0-9):").strong());
+                    ui.label(egui::RichText::new(self.i18n.t("drawer.num_label")).strong());
                     ui.add_space(4.0);
 
                     let num_btn_size = Vec2::new(44.0, 28.0);
@@ -1435,33 +1499,32 @@ impl VcdPlayerApp {
                     ui.add_space(6.0);
                     ui.separator();
                     let vm_status = match &self.kernel.vm.state {
-                        crate::core::script_vm::VmState::Ready => "就绪".to_string(),
-                        crate::core::script_vm::VmState::Running => "运行中".to_string(),
+                        crate::core::script_vm::VmState::Ready => self.i18n.t("drawer.vm_ready").to_string(),
+                        crate::core::script_vm::VmState::Running => self.i18n.t("drawer.vm_running").to_string(),
                         crate::core::script_vm::VmState::WaitingForKey { target_var }
                         | crate::core::script_vm::VmState::WaitingForKeyWithTimeout { target_var, .. } => {
-                            format!("等待输入 -> {}", *target_var as char)
+                            let var_str = format!("{}", *target_var as char);
+                            self.i18n.t_fmt("drawer.vm_waiting_input", &[&var_str])
                         }
                         crate::core::script_vm::VmState::WaitingForDelay { .. } => {
-                            "延时等待中".to_string()
+                            self.i18n.t("drawer.vm_waiting_delay").to_string()
                         }
                         crate::core::script_vm::VmState::WaitingForVideo => {
-                            "🎬 视频播放中".to_string()
+                            self.i18n.t("drawer.vm_waiting_video").to_string()
                         }
-                        crate::core::script_vm::VmState::Finished => "已结束".to_string(),
-                        crate::core::script_vm::VmState::PausedForAlert(_) => "⚠️ 暂停警告".to_string(),
+                        crate::core::script_vm::VmState::Finished => self.i18n.t("drawer.vm_finished").to_string(),
+                        crate::core::script_vm::VmState::PausedForAlert(_) => self.i18n.t("drawer.vm_alert").to_string(),
                         crate::core::script_vm::VmState::Error(err) => err.clone(),
                     };
-                    ui.label(egui::RichText::new(format!("脚本: {}", vm_status)).size(11.0).color(Color32::LIGHT_GRAY));
+                    ui.label(egui::RichText::new(self.i18n.t_fmt("drawer.script_status", &[&vm_status])).size(11.0).color(Color32::LIGHT_GRAY));
                         }
                         DrawerTab::Tracks => {
                             ui.horizontal(|ui| {
+                                let mode_name = self.i18n.t(self.kernel.active_mode.i18n_key());
                                 ui.label(
-                                    egui::RichText::new(format!(
-                                        "当前模式: {}",
-                                        self.kernel.active_mode.label()
-                                    ))
-                                    .size(11.0)
-                                    .color(Color32::LIGHT_GRAY),
+                                    egui::RichText::new(self.i18n.t_fmt("drawer.current_mode", &[mode_name]))
+                                        .size(11.0)
+                                        .color(Color32::LIGHT_GRAY),
                                 );
                             });
                             ui.add_space(4.0);
@@ -1469,12 +1532,7 @@ impl VcdPlayerApp {
                             if self.kernel.tracks.is_empty() {
                                 ui.vertical_centered(|ui| {
                                     ui.add_space(20.0);
-                                    ui.label(egui::RichText::new("暂未发现音视频曲目").color(Color32::GRAY));
-                                    ui.label(
-                                        egui::RichText::new("请加载有效光盘或视频文件")
-                                            .size(11.0)
-                                            .color(Color32::DARK_GRAY),
-                                    );
+                                    ui.label(egui::RichText::new(self.i18n.t("drawer.tracks_empty")).color(Color32::GRAY));
                                 });
                             } else {
                                 let mut selected_track_idx = None;
@@ -1501,7 +1559,8 @@ impl VcdPlayerApp {
 
                                 if let Some(idx) = selected_track_idx {
                                     let _ = self.kernel.play_track(idx);
-                                    self.set_status(format!("正在播放: {}", selected_track_title));
+                                    let track_num = format!("{:02}", self.kernel.tracks.get(idx).map(|t| t.index).unwrap_or(idx + 1));
+                                    self.set_status(self.i18n.t_fmt("status.playing_track", &[&track_num, &selected_track_title]));
                                     self.texture = None;
                                     self.texture_dirty = true;
                                     ctx.request_repaint();
@@ -1640,24 +1699,24 @@ impl VcdPlayerApp {
                             match self.kernel.activate_hotspot(&area) {
                                 Ok(true) => {
                                     if is_wav {
-                                        self.set_status(format!("播放音频: {}", area.target));
+                                        self.set_status(self.i18n.t_fmt("status.play_audio", &[&area.target]));
                                     } else if is_video || self.kernel.is_video_active() {
-                                        self.set_status(format!("播放视频: {}", area.target));
+                                        self.set_status(self.i18n.t_fmt("status.play_video", &[&area.target]));
                                         self.texture = None;
                                         self.texture_dirty = true;
                                     } else {
-                                        self.set_status(format!("已跳转至: {}", area.target));
+                                        self.set_status(self.i18n.t_fmt("status.navigated_to", &[&area.target]));
                                         self.texture = None;
                                         self.texture_dirty = true;
                                     }
                                     ctx.request_repaint();
                                 }
                                 Ok(false) => {
-                                    self.set_status(format!("触发动作: {}", area.target));
+                                    self.set_status(self.i18n.t_fmt("status.action_triggered", &[&area.target]));
                                     ctx.request_repaint();
                                 }
                                 Err(e) => {
-                                    self.set_status(format!("跳转失败: {}", e));
+                                    self.set_status(self.i18n.t_fmt("status.nav_failed", &[&e.to_string()]));
                                 }
                             }
                         }
@@ -1771,4 +1830,52 @@ impl eframe::App for VcdPlayerApp {
         self.show(ui);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_status_bar_language_switch() {
+        let kernel = VcdKernel::new();
+        let mut app = VcdPlayerApp::from_kernel(kernel);
+        app.i18n.set_language("zh-CN".to_string());
+
+        assert!(app.i18n.t("status.idle").starts_with("空闲"));
+
+        // Switch to English
+        app.i18n.set_language("en-US".to_string());
+        assert!(app.i18n.t("status.idle").starts_with("Idle"));
+
+        // Check ejected state
+        app.eject_disc();
+        assert!(app.is_disc_ejected);
+        assert_eq!(app.i18n.t("status.disc_ejected"), "Disc ejected");
+
+        // Switch back to Chinese while ejected
+        app.i18n.set_language("zh-CN".to_string());
+        assert_eq!(app.i18n.t("status.disc_ejected"), "光盘已弹出");
+    }
+
+    #[test]
+    fn test_drawer_mode_and_vm_status_translation() {
+        let kernel = VcdKernel::new();
+        let mut app = VcdPlayerApp::from_kernel(kernel);
+
+        // Chinese
+        app.i18n.set_language("zh-CN".to_string());
+        let mode_name_zh = app.i18n.t(app.kernel.active_mode.i18n_key());
+        let full_mode_zh = app.i18n.t_fmt("drawer.current_mode", &[mode_name_zh]);
+        assert_eq!(full_mode_zh, "当前模式: VCD 3.0 互动模式");
+        assert_eq!(app.i18n.t("drawer.vm_ready"), "就绪");
+
+        // English
+        app.i18n.set_language("en-US".to_string());
+        let mode_name_en = app.i18n.t(app.kernel.active_mode.i18n_key());
+        let full_mode_en = app.i18n.t_fmt("drawer.current_mode", &[mode_name_en]);
+        assert_eq!(full_mode_en, "Current Mode: VCD 3.0 Interactive Mode");
+        assert_eq!(app.i18n.t("drawer.vm_ready"), "Ready");
+    }
+}
+
 

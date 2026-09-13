@@ -7,6 +7,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-13
+
+### Added
+- Multi-language support with Chinese and English, defaulting to system language.
+- Settings dialog to change language via new titlebar button.
+- Community translation support with locale template and guide.
+
 ## [0.4.0] - 2026-09-12
 
 ### Added

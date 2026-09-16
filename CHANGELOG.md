@@ -7,6 +7,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-16
+
+### Added
+- Extended Playback Control (PBC-X) support:
+  - Full binary parsing and execution for `EXT/PSD_X.VCD` (Extended Play Sequence Descriptor) and `EXT/LOT_X.VCD` (Extended List ID Offset Table).
+  - Support for `0x1A` Extended Selection List (`EXT_SELECTION_LIST`) descriptors, preserving button coordinate areas and interactive branch logic.
+  - Automatic path resolution priority: prefers `EXT/` extended PBC data and gracefully falls back to standard `VCD/` tables.
+
 ## [0.5.0] - 2026-09-13
 
 ### Added

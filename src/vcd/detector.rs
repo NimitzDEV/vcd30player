@@ -149,6 +149,49 @@ pub fn find_path_ci(root: &Path, rel_parts: &[&str]) -> Option<PathBuf> {
     Some(current)
 }
 
+/// File paths resolved for Playback Control (PBC) data structures on a disc.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PbcSourcePaths {
+    /// Path to `PSD_X.VCD` or `PSD.VCD`
+    pub psd_path: PathBuf,
+    /// Path to `LOT_X.VCD` or `LOT.VCD`
+    pub lot_path: PathBuf,
+    /// Whether extended PBC files (`EXT/PSD_X.VCD` + `EXT/LOT_X.VCD`) are used
+    pub is_extended: bool,
+}
+
+/// Resolves the PBC source files on a disc directory, prioritizing Extended PBC (`EXT/PSD_X.VCD` + `EXT/LOT_X.VCD`)
+/// over Standard PBC (`VCD/PSD.VCD` + `VCD/LOT.VCD`).
+pub fn resolve_pbc_paths(disc_root: &Path) -> Option<PbcSourcePaths> {
+    if !disc_root.exists() {
+        return None;
+    }
+
+    // 1. Check for Extended PBC in EXT/
+    let psd_x = find_path_ci(disc_root, &["EXT", "PSD_X.VCD"]);
+    let lot_x = find_path_ci(disc_root, &["EXT", "LOT_X.VCD"]);
+    if let (Some(psd_path), Some(lot_path)) = (psd_x, lot_x) {
+        return Some(PbcSourcePaths {
+            psd_path,
+            lot_path,
+            is_extended: true,
+        });
+    }
+
+    // 2. Fallback to Standard PBC in VCD/
+    let psd = find_path_ci(disc_root, &["VCD", "PSD.VCD"]);
+    let lot = find_path_ci(disc_root, &["VCD", "LOT.VCD"]);
+    if let (Some(psd_path), Some(lot_path)) = (psd, lot) {
+        return Some(PbcSourcePaths {
+            psd_path,
+            lot_path,
+            is_extended: false,
+        });
+    }
+
+    None
+}
+
 /// Detects the exact VCD version and format of a disc root directory.
 pub fn detect_disc(disc_root: &Path) -> VcdDiscType {
     if !disc_root.exists() {
@@ -212,8 +255,8 @@ pub fn detect_disc(disc_root: &Path) -> VcdDiscType {
         }
 
         if info.version == 2 {
-            let has_pbc_files = find_path_ci(disc_root, &["VCD", "PSD.VCD"]).is_some()
-                && find_path_ci(disc_root, &["VCD", "LOT.VCD"]).is_some();
+            let pbc_resolved = resolve_pbc_paths(disc_root);
+            let has_pbc_files = pbc_resolved.is_some();
             if info.has_pbc() || has_pbc_files {
                 return VcdDiscType::Vcd20WithPbc {
                     entry_count,
@@ -384,6 +427,36 @@ mod tests {
 
         let disc_type = detect_disc(&temp_dir);
         assert_eq!(disc_type, VcdDiscType::RawVideoDisc { video_count: 1 });
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_resolve_pbc_paths_priority_and_fallback() {
+        let temp_dir = std::env::temp_dir().join("vcd_test_pbc_paths");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+
+        let vcd_dir = temp_dir.join("VCD");
+        let ext_dir = temp_dir.join("EXT");
+        std::fs::create_dir_all(&vcd_dir).unwrap();
+        std::fs::create_dir_all(&ext_dir).unwrap();
+
+        // Initially no files -> None
+        assert!(resolve_pbc_paths(&temp_dir).is_none());
+
+        // Only VCD files present -> Standard PBC
+        std::fs::write(vcd_dir.join("PSD.VCD"), b"MOCK_PSD").unwrap();
+        std::fs::write(vcd_dir.join("LOT.VCD"), b"MOCK_LOT").unwrap();
+        let pbc_standard = resolve_pbc_paths(&temp_dir).expect("should find standard PBC");
+        assert!(!pbc_standard.is_extended);
+        assert!(pbc_standard.psd_path.ends_with("PSD.VCD"));
+
+        // Both VCD and EXT files present -> Extended PBC takes precedence
+        std::fs::write(ext_dir.join("PSD_X.VCD"), b"MOCK_PSD_X").unwrap();
+        std::fs::write(ext_dir.join("LOT_X.VCD"), b"MOCK_LOT_X").unwrap();
+        let pbc_extended = resolve_pbc_paths(&temp_dir).expect("should find extended PBC");
+        assert!(pbc_extended.is_extended);
+        assert!(pbc_extended.psd_path.ends_with("PSD_X.VCD"));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

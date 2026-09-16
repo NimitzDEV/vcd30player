@@ -31,7 +31,7 @@ pub struct PlayListDesc {
     pub items: Vec<u16>,
 }
 
-/// SelectionList Descriptor (0x18)
+/// SelectionList Descriptor (0x18 / 0x1A / 0x11)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SelectionListDesc {
     pub byte_offset: usize,
@@ -52,6 +52,17 @@ pub struct SelectionListDesc {
     pub item_id: u16,
     /// Target offsets (in 8-byte units) for selections 0..nos-1
     pub selections: Vec<u16>,
+    /// Descriptor tag (0x18 = Standard, 0x1A = Extended, 0x11 = Basic)
+    pub descriptor_tag: u8,
+    /// Extended area and button attributes (present if 0x1A, empty otherwise)
+    pub ext_area_data: Vec<u8>,
+}
+
+impl SelectionListDesc {
+    /// Returns true if this is an Extended Selection List (0x1A).
+    pub fn is_extended(&self) -> bool {
+        self.descriptor_tag == 0x1A
+    }
 }
 
 /// EndList Descriptor (0x1F)
@@ -118,9 +129,17 @@ impl PsdDescriptor {
             PsdDescriptor::EndList(_) => 0xFFFF,
         }
     }
+
+    /// Returns true if this descriptor is an Extended Selection List.
+    pub fn is_extended(&self) -> bool {
+        match self {
+            PsdDescriptor::SelectionList(s) => s.is_extended(),
+            _ => false,
+        }
+    }
 }
 
-/// Complete parsed table of descriptors from `PSD.VCD`.
+/// Complete parsed table of descriptors from `PSD.VCD` or `PSD_X.VCD`.
 #[derive(Debug, Clone)]
 pub struct PsdTable {
     pub descriptors: Vec<PsdDescriptor>,
@@ -130,7 +149,7 @@ pub struct PsdTable {
 }
 
 impl PsdTable {
-    /// Parses `PSD.VCD` from raw bytes.
+    /// Parses `PSD.VCD` or `PSD_X.VCD` from raw bytes.
     pub fn parse(data: &[u8], offset_mult: usize) -> Result<Self, String> {
         let mult = if offset_mult == 0 { 8 } else { offset_mult };
         let mut descriptors = Vec::new();
@@ -193,18 +212,27 @@ impl PsdTable {
                     descriptors.push(PsdDescriptor::PlayList(desc));
                     offset_map.insert(byte_offset, idx);
                     unit_map.insert(unit_offset, idx);
-                    pos += desc_len;
+
+                    let padded_len = desc_len.div_ceil(mult) * mult;
+                    pos += padded_len;
                 }
-                0x18 => {
-                    // SelectionList
+                0x18 | 0x1A | 0x11 => {
+                    // SelectionList (0x18 = Standard, 0x1A = Extended, 0x11 = Basic)
                     if pos + 20 > data.len() {
                         break;
                     }
                     let flags = data[pos + 1];
                     let nos = data[pos + 2] as usize;
                     let bsn = data[pos + 3];
-                    let desc_len = 20 + nos * 2;
-                    if pos + desc_len > data.len() {
+
+                    // Standard (0x18/0x11) has 20 + nos * 2 bytes.
+                    // Extended (0x1A) adds 16 bytes general area info + nos * 4 bytes button areas.
+                    let raw_len = if desc_type == 0x1A {
+                        36 + nos * 6
+                    } else {
+                        20 + nos * 2
+                    };
+                    if pos + raw_len > data.len() {
                         break;
                     }
 
@@ -225,6 +253,12 @@ impl PsdTable {
                         selections.push(sel_ofs);
                     }
 
+                    let ext_area_data = if desc_type == 0x1A {
+                        data[pos + 20 + nos * 2..pos + raw_len].to_vec()
+                    } else {
+                        Vec::new()
+                    };
+
                     let desc = SelectionListDesc {
                         byte_offset,
                         unit_offset,
@@ -241,13 +275,17 @@ impl PsdTable {
                         loop_count,
                         item_id,
                         selections,
+                        descriptor_tag: desc_type,
+                        ext_area_data,
                     };
 
                     let idx = descriptors.len();
                     descriptors.push(PsdDescriptor::SelectionList(desc));
                     offset_map.insert(byte_offset, idx);
                     unit_map.insert(unit_offset, idx);
-                    pos += desc_len;
+
+                    let padded_len = raw_len.div_ceil(mult) * mult;
+                    pos += padded_len;
                 }
                 0x1F => {
                     // EndList
@@ -268,7 +306,8 @@ impl PsdTable {
                     descriptors.push(PsdDescriptor::EndList(desc));
                     offset_map.insert(byte_offset, idx);
                     unit_map.insert(unit_offset, idx);
-                    pos += 8; // Standard EndList descriptor is 8 bytes
+                    let padded_len = 8_usize.div_ceil(mult) * mult;
+                    pos += padded_len;
                 }
                 _ => {
                     // Unknown or padding
@@ -320,6 +359,11 @@ impl PsdTable {
         }
         None
     }
+
+    /// Returns true if any descriptor in this table is an Extended Selection List.
+    pub fn has_extended_descriptors(&self) -> bool {
+        self.descriptors.iter().any(|d| d.is_extended())
+    }
 }
 
 #[cfg(test)]
@@ -368,6 +412,7 @@ mod tests {
 
         let psd = PsdTable::parse(&raw, 8).expect("failed to parse psd");
         assert_eq!(psd.descriptors.len(), 3);
+        assert!(!psd.has_extended_descriptors());
 
         // Check PlayList
         match psd.get_by_unit_offset(0) {
@@ -388,6 +433,7 @@ mod tests {
                 assert_eq!(s.item_id, 18);
                 assert_eq!(s.selections, vec![9, 11]);
                 assert_eq!(s.timeout_time, 15);
+                assert!(!s.is_extended());
             }
             _ => panic!("expected SelectionList at unit 2"),
         }
@@ -402,5 +448,70 @@ mod tests {
 
         let first_sel = psd.first_selection_list().expect("first selection list");
         assert_eq!(first_sel.lid, 2);
+    }
+
+    #[test]
+    fn test_psd_parse_extended_selection_list() {
+        let mut raw = Vec::new();
+        // Extended SelectionList (0x1A) at unit 0
+        raw.push(0x1A); // desc_type
+        raw.push(0x00); // flags
+        raw.push(2);    // nos = 2
+        raw.push(1);    // bsn = 1
+        raw.extend_from_slice(&10u16.to_be_bytes()); // lid = 10
+        raw.extend_from_slice(&0u16.to_be_bytes());  // prev_ofs = 0
+        raw.extend_from_slice(&19u16.to_be_bytes()); // next_ofs = 19
+        raw.extend_from_slice(&0u16.to_be_bytes());  // return_ofs = 0
+        raw.extend_from_slice(&0xFFFFu16.to_be_bytes()); // default_ofs
+        raw.extend_from_slice(&19u16.to_be_bytes()); // timeout_ofs = 19
+        raw.push(0); // timeout_time = 0
+        raw.push(1); // loop = 1
+        raw.extend_from_slice(&18u16.to_be_bytes()); // item_id = 18
+        // Selections: 2 * 2 = 4 bytes
+        raw.extend_from_slice(&19u16.to_be_bytes()); // sel 0 -> unit 19
+        raw.extend_from_slice(&21u16.to_be_bytes()); // sel 1 -> unit 21
+        // Extended area info: 16 bytes
+        raw.extend_from_slice(&[0x01; 16]);
+        // Button coordinates: nos * 4 = 8 bytes
+        raw.extend_from_slice(&[0x02; 8]);
+        // Raw length so far: 20 + 4 + 16 + 8 = 48 bytes (divisible by 8)
+        assert_eq!(raw.len(), 48);
+
+        // Next descriptor: PlayList at unit 6 (byte 48)
+        raw.push(0x10);
+        raw.push(1); // noi = 1
+        raw.extend_from_slice(&11u16.to_be_bytes()); // lid = 11
+        raw.extend_from_slice(&0xFFFFu16.to_be_bytes());
+        raw.extend_from_slice(&0xFFFFu16.to_be_bytes());
+        raw.extend_from_slice(&0xFFFFu16.to_be_bytes());
+        raw.extend_from_slice(&0u16.to_be_bytes());
+        raw.push(0);
+        raw.push(0);
+        raw.extend_from_slice(&2u16.to_be_bytes()); // items[0] = 2
+
+        let psd = PsdTable::parse(&raw, 8).expect("failed to parse extended psd");
+        assert_eq!(psd.descriptors.len(), 2);
+        assert!(psd.has_extended_descriptors());
+
+        match psd.get_by_unit_offset(0) {
+            Some(PsdDescriptor::SelectionList(s)) => {
+                assert_eq!(s.lid, 10);
+                assert_eq!(s.descriptor_tag, 0x1A);
+                assert!(s.is_extended());
+                assert_eq!(s.selections, vec![19, 21]);
+                assert_eq!(s.ext_area_data.len(), 24); // 16 + 8
+                assert_eq!(&s.ext_area_data[0..16], &[0x01; 16]);
+                assert_eq!(&s.ext_area_data[16..24], &[0x02; 8]);
+            }
+            _ => panic!("expected Extended SelectionList at unit 0"),
+        }
+
+        match psd.get_by_unit_offset(6) {
+            Some(PsdDescriptor::PlayList(p)) => {
+                assert_eq!(p.lid, 11);
+                assert_eq!(p.items, vec![2]);
+            }
+            _ => panic!("expected PlayList at unit 6"),
+        }
     }
 }

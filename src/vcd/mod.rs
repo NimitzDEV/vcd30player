@@ -9,7 +9,7 @@ pub mod psd;
 pub mod segment;
 pub mod track;
 
-pub use detector::{detect_disc, VcdDiscType};
+pub use detector::{detect_disc, resolve_pbc_paths, PbcSourcePaths, VcdDiscType};
 pub use entries::{VcdEntries, VcdEntry};
 pub use info::VcdInfo;
 pub use lot::LotTable;

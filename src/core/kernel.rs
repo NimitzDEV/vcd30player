@@ -1003,16 +1003,20 @@ impl VcdKernel {
         }
     }
 
-    /// Initializes PBC interactive state machine from LOT.VCD and PSD.VCD.
+    /// Initializes PBC interactive state machine from LOT.VCD/LOT_X.VCD and PSD.VCD/PSD_X.VCD.
     pub fn init_pbc(&mut self) -> Result<(), String> {
-        let lot_path = crate::vcd::detector::find_path_ci(&self.disc_root, &["VCD", "LOT.VCD"])
-            .ok_or_else(|| "未找到 LOT.VCD 映射文件".to_string())?;
-        let psd_path = crate::vcd::detector::find_path_ci(&self.disc_root, &["VCD", "PSD.VCD"])
-            .ok_or_else(|| "未找到 PSD.VCD 控制文件".to_string())?;
+        let pbc_paths = crate::vcd::detector::resolve_pbc_paths(&self.disc_root)
+            .ok_or_else(|| "未找到 PBC 结构文件 (LOT.VCD/LOT_X.VCD 与 PSD.VCD/PSD_X.VCD)".to_string())?;
 
         let offset_mult = 8;
-        let lot = crate::vcd::LotTable::from_file(&lot_path, offset_mult)?;
-        let psd = crate::vcd::PsdTable::from_file(&psd_path, offset_mult)?;
+        let lot = crate::vcd::LotTable::from_file(&pbc_paths.lot_path, offset_mult)?;
+        let psd = crate::vcd::PsdTable::from_file(&pbc_paths.psd_path, offset_mult)?;
+
+        println!(
+            "[PBC] 加载 PBC 控制结构成功: {} (is_extended: {})",
+            pbc_paths.psd_path.display(),
+            pbc_paths.is_extended
+        );
 
         self.pbc = Some(crate::vcd::PbcEngine::new(lot, psd));
         self.pbc_digit_buffer.clear();

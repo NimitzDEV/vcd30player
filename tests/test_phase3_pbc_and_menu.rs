@@ -605,3 +605,136 @@ fn test_track_numeric_keypad_during_playback() {
     );
 }
 
+#[test]
+fn test_pbc_extended_synthetic_disc_precedence() {
+    let temp_dir = std::env::temp_dir().join("vcd_test_pbc_extended_precedence");
+    let _ = std::fs::remove_dir_all(&temp_dir);
+
+    let vcd_dir = temp_dir.join("VCD");
+    let ext_dir = temp_dir.join("EXT");
+    std::fs::create_dir_all(&vcd_dir).unwrap();
+    std::fs::create_dir_all(&ext_dir).unwrap();
+
+    // 1. Build standard VCD/PSD.VCD (PlayList LID 1, standard SelectionList LID 2 tag 0x18)
+    let mut standard_psd = Vec::new();
+    // PlayList at 0 (unit 0)
+    standard_psd.push(0x10); standard_psd.push(1);
+    standard_psd.extend_from_slice(&1u16.to_be_bytes());
+    standard_psd.extend_from_slice(&0xFFFFu16.to_be_bytes());
+    standard_psd.extend_from_slice(&2u16.to_be_bytes());
+    standard_psd.extend_from_slice(&0xFFFFu16.to_be_bytes());
+    standard_psd.extend_from_slice(&0u16.to_be_bytes());
+    standard_psd.push(0); standard_psd.push(0);
+    standard_psd.extend_from_slice(&2u16.to_be_bytes()); // item 2
+    // SelectionList at 16 (unit 2) with 0x18
+    standard_psd.push(0x18); standard_psd.push(0); standard_psd.push(1); standard_psd.push(1);
+    standard_psd.extend_from_slice(&2u16.to_be_bytes());
+    standard_psd.extend_from_slice(&0u16.to_be_bytes()); standard_psd.extend_from_slice(&0xFFFFu16.to_be_bytes());
+    standard_psd.extend_from_slice(&0u16.to_be_bytes()); standard_psd.extend_from_slice(&0xFFFFu16.to_be_bytes());
+    standard_psd.extend_from_slice(&0xFFFFu16.to_be_bytes()); standard_psd.push(0); standard_psd.push(1);
+    standard_psd.extend_from_slice(&2u16.to_be_bytes());
+    standard_psd.extend_from_slice(&0u16.to_be_bytes());
+    while standard_psd.len() % 8 != 0 {
+        standard_psd.push(0);
+    }
+    std::fs::write(vcd_dir.join("PSD.VCD"), &standard_psd).unwrap();
+
+    let mut standard_lot = vec![0xFFu8; 16]; // 8 u16s
+    standard_lot[2] = 0; standard_lot[3] = 0; // LID 1 -> unit 0
+    standard_lot[4] = 0; standard_lot[5] = 2; // LID 2 -> unit 2
+    std::fs::write(vcd_dir.join("LOT.VCD"), &standard_lot).unwrap();
+
+    // 2. Build EXT/PSD_X.VCD with Extended SelectionList (tag 0x1A)
+    let mut ext_psd = Vec::new();
+    // PlayList at 0 (unit 0)
+    ext_psd.push(0x10); ext_psd.push(1);
+    ext_psd.extend_from_slice(&1u16.to_be_bytes());
+    ext_psd.extend_from_slice(&0xFFFFu16.to_be_bytes());
+    ext_psd.extend_from_slice(&2u16.to_be_bytes());
+    ext_psd.extend_from_slice(&0xFFFFu16.to_be_bytes());
+    ext_psd.extend_from_slice(&0u16.to_be_bytes());
+    ext_psd.push(0); ext_psd.push(0);
+    ext_psd.extend_from_slice(&2u16.to_be_bytes());
+    // Extended SelectionList at 16 (unit 2) with 0x1A
+    ext_psd.push(0x1A); ext_psd.push(0); ext_psd.push(1); ext_psd.push(1);
+    ext_psd.extend_from_slice(&2u16.to_be_bytes());
+    ext_psd.extend_from_slice(&0u16.to_be_bytes()); ext_psd.extend_from_slice(&0xFFFFu16.to_be_bytes());
+    ext_psd.extend_from_slice(&0u16.to_be_bytes()); ext_psd.extend_from_slice(&0xFFFFu16.to_be_bytes());
+    ext_psd.extend_from_slice(&0xFFFFu16.to_be_bytes()); ext_psd.push(0); ext_psd.push(1);
+    ext_psd.extend_from_slice(&2u16.to_be_bytes());
+    ext_psd.extend_from_slice(&0u16.to_be_bytes()); // selections: 1 * 2 = 2 bytes
+    ext_psd.extend_from_slice(&[0xAA; 16]); // 16 bytes general area info
+    ext_psd.extend_from_slice(&[0xBB; 4]);  // 1 * 4 bytes item button area
+    while ext_psd.len() % 8 != 0 {
+        ext_psd.push(0);
+    }
+    std::fs::write(ext_dir.join("PSD_X.VCD"), &ext_psd).unwrap();
+
+    let mut ext_lot = vec![0xFFu8; 16];
+    ext_lot[2] = 0; ext_lot[3] = 0; // LID 1 -> unit 0
+    ext_lot[4] = 0; ext_lot[5] = 2; // LID 2 -> unit 2
+    std::fs::write(ext_dir.join("LOT_X.VCD"), &ext_lot).unwrap();
+
+    // Verify resolve_pbc_paths chooses EXT/
+    let resolved = vcd30_player::vcd::resolve_pbc_paths(&temp_dir).expect("resolve pbc paths");
+    assert!(resolved.is_extended);
+    assert!(resolved.psd_path.ends_with("PSD_X.VCD"));
+    assert!(resolved.lot_path.ends_with("LOT_X.VCD"));
+
+    // Verify kernel.init_pbc initializes with extended PBC
+    let mut kernel = VcdKernel::new();
+    kernel.disc_root = temp_dir.clone();
+    kernel.init_pbc().expect("init pbc");
+    let pbc = kernel.pbc.as_ref().expect("pbc engine present");
+    assert!(pbc.psd.has_extended_descriptors());
+
+    let lid2_desc = pbc.psd.get_by_lid(2, &pbc.lot).expect("find LID 2");
+    match lid2_desc {
+        PsdDescriptor::SelectionList(s) => {
+            assert!(s.is_extended());
+            assert_eq!(s.descriptor_tag, 0x1A);
+            assert_eq!(s.ext_area_data.len(), 20); // 16 + 4
+        }
+        _ => panic!("expected SelectionList for LID 2"),
+    }
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_paradise_disc_extended_pbc() {
+    let paradise_root = match get_paradise_disc_root() {
+        Some(r) => r,
+        None => return,
+    };
+
+    // 1. Verify path resolution prioritizes EXT/PSD_X.VCD
+    let pbc_paths = vcd30_player::vcd::resolve_pbc_paths(&paradise_root)
+        .expect("should resolve PBC paths on reference disc");
+    assert!(pbc_paths.is_extended, "Paradise disc should use Extended PBC");
+    assert!(pbc_paths.psd_path.to_string_lossy().to_ascii_uppercase().contains("PSD_X.VCD"));
+    assert!(pbc_paths.lot_path.to_string_lossy().to_ascii_uppercase().contains("LOT_X.VCD"));
+
+    // 2. Initialize kernel PBC
+    let mut kernel = VcdKernel::new();
+    kernel.disc_root = paradise_root;
+    kernel.init_pbc().expect("init_pbc on paradise disc");
+
+    let pbc = kernel.pbc.as_ref().expect("pbc initialized");
+    assert!(pbc.psd.has_extended_descriptors(), "PSD_X.VCD must have extended descriptors");
+
+    // 3. LID 2 must be the 0x1A Extended Selection List
+    let lid2 = pbc.psd.get_by_lid(2, &pbc.lot).expect("LID 2 exists");
+    match lid2 {
+        PsdDescriptor::SelectionList(s) => {
+            assert_eq!(s.descriptor_tag, 0x1A);
+            assert!(s.is_extended());
+            assert_eq!(s.nos, 16);
+            assert_eq!(s.bsn, 1);
+            assert_eq!(s.item_id, 18);
+            assert_eq!(s.selections.len(), 16);
+            assert_eq!(s.ext_area_data.len(), 16 + 16 * 4); // 80 bytes
+        }
+        _ => panic!("LID 2 must be SelectionList"),
+    }
+}

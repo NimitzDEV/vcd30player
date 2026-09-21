@@ -5,9 +5,10 @@
 mod common;
 
 use std::path::{Path, PathBuf};
+use vcd30_player::audio::{AudioChannelMode, AudioManager};
 use vcd30_player::core::kernel::{ActiveDiscMode, VcdKernel};
 use vcd30_player::vcd::{
-    LotTable, PbcAction, PbcEngine, PbcState, PsdDescriptor, PsdTable,
+    decode_segment_item, LotTable, PbcAction, PbcEngine, PbcState, PsdDescriptor, PsdTable,
 };
 
 /// Returns the path to the VCD 2.0 paradise reference disc if explicitly configured via env var or exists locally.
@@ -1215,5 +1216,140 @@ fn test_pbc_selection_list_loop_count_infinite() {
             }
         );
         assert!(!engine.has_active_timer(), "infinite loop never activates timeout countdown");
+    }
+}
+
+#[test]
+fn test_audio_manager_segment_audio_playback_and_channel_mode() {
+    let mut audio = AudioManager::silent();
+    assert!(!audio.is_bgm_playing());
+
+    // Silent mode safety: should not crash with empty or valid samples
+    audio.play_segment_audio(44100, vec![], AudioChannelMode::Stereo);
+    assert!(!audio.is_bgm_playing());
+
+    let samples = vec![0.1f32; 1152 * 2];
+    audio.play_segment_audio(44100, samples, AudioChannelMode::LeftOnly);
+
+    // Channel mode update should be safe
+    audio.set_channel_mode(AudioChannelMode::RightOnly);
+    audio.set_channel_mode(AudioChannelMode::Stereo);
+
+    // Stop should reset cleanly
+    audio.stop_bgm();
+    assert!(!audio.is_bgm_playing());
+}
+
+#[test]
+fn test_kernel_set_channel_mode_syncs_audio_and_player() {
+    let mut kernel = VcdKernel::new();
+    assert_eq!(kernel.channel_mode, AudioChannelMode::Stereo);
+
+    kernel.set_channel_mode(AudioChannelMode::LeftOnly);
+    assert_eq!(kernel.channel_mode, AudioChannelMode::LeftOnly);
+
+    kernel.set_channel_mode(AudioChannelMode::RightOnly);
+    assert_eq!(kernel.channel_mode, AudioChannelMode::RightOnly);
+
+    kernel.set_channel_mode(AudioChannelMode::Stereo);
+    assert_eq!(kernel.channel_mode, AudioChannelMode::Stereo);
+}
+
+#[test]
+fn test_kernel_pbc_segment_audio_completion_in_playlist() {
+    let mut raw_lot = vec![0u8; 16];
+    raw_lot[2] = 0; raw_lot[3] = 0; // LID 1 -> unit 0
+    raw_lot[4] = 0; raw_lot[5] = 2; // LID 2 -> unit 2
+    let lot = LotTable::parse(&raw_lot, 8).unwrap();
+
+    let mut raw_psd = Vec::new();
+    // 1. PlayList LID 1 at unit 0: noi = 1 item (track 2), wtime = 0, next = unit 2 (EndList)
+    raw_psd.push(0x10);
+    raw_psd.push(1); // noi = 1
+    raw_psd.extend_from_slice(&1u16.to_be_bytes());
+    raw_psd.extend_from_slice(&0xFFFFu16.to_be_bytes());
+    raw_psd.extend_from_slice(&2u16.to_be_bytes()); // next = unit 2 (EndList)
+    raw_psd.extend_from_slice(&0xFFFFu16.to_be_bytes());
+    raw_psd.extend_from_slice(&0u16.to_be_bytes());
+    raw_psd.push(0); // wtime = 0
+    raw_psd.push(0);
+    raw_psd.extend_from_slice(&2u16.to_be_bytes()); // item 0 = track 2
+    while raw_psd.len() % 8 != 0 {
+        raw_psd.push(0);
+    }
+
+    // 2. EndList at unit 2 (byte 16)
+    raw_psd.push(0x1F);
+    raw_psd.push(0);
+    raw_psd.extend_from_slice(&0u16.to_be_bytes());
+    raw_psd.extend_from_slice(&[0u8; 4]);
+    while raw_psd.len() % 8 != 0 {
+        raw_psd.push(0);
+    }
+
+    let psd = PsdTable::parse(&raw_psd, 8).unwrap();
+    let mut kernel = VcdKernel::new();
+    kernel.active_mode = ActiveDiscMode::Vcd20Classic;
+    kernel.pbc = Some(PbcEngine::new(lot, psd));
+
+    let act1 = kernel.pbc.as_mut().unwrap().start().expect("start action");
+    assert_eq!(
+        act1,
+        PbcAction::PlayTrack {
+            track_number: 2,
+            item_id: 2,
+            ptime: 0,
+            wtime: 0
+        }
+    );
+
+    // Simulate segment audio was playing for item 0, and has now completed
+    kernel.segment_audio_playing = true;
+    // Calling tick_pbc when audio has stopped triggers on_item_finished and advances to EndList!
+    let fired = kernel.tick_pbc(0.1).expect("tick pbc");
+    assert!(fired);
+    assert!(!kernel.segment_audio_playing);
+    assert_eq!(kernel.pbc.as_ref().unwrap().state, PbcState::Ended);
+}
+
+#[test]
+fn test_decode_segment_item_real_disc_or_skip() {
+    let Some(root) = common::get_live_disc_root() else {
+        eprintln!("No live disc mounted, skipping real decode_segment_item test.");
+        return;
+    };
+    // Check if SEGMENT exists, or test on any DAT in MPEGAV as standard CD-XA / MPEG container
+    let candidate = if root.join("SEGMENT").join("ITEM0001.DAT").exists() {
+        Some(root.join("SEGMENT").join("ITEM0001.DAT"))
+    } else if root.join("MPEGAV").join("AVSEQ01.DAT").exists() {
+        Some(root.join("MPEGAV").join("AVSEQ01.DAT"))
+    } else if root.join("MPEGAV").join("MUSIC01.DAT").exists() {
+        Some(root.join("MPEGAV").join("MUSIC01.DAT"))
+    } else {
+        None
+    };
+
+    let Some(dat_path) = candidate else {
+        eprintln!("No sample DAT found, skipping test.");
+        return;
+    };
+
+    let decoded = decode_segment_item(&dat_path).expect("Failed to decode segment item");
+    assert!(decoded.width > 0);
+    assert!(decoded.height > 0);
+    assert_eq!(decoded.rgba.len(), (decoded.width * decoded.height * 4) as usize);
+
+    if let Some((sample_rate, ref samples)) = decoded.audio {
+        assert!(sample_rate > 0);
+        assert!(!samples.is_empty());
+        println!(
+            "Decoded segment with audio: {}x{}, audio sample_rate={}, samples_count={}",
+            decoded.width,
+            decoded.height,
+            sample_rate,
+            samples.len()
+        );
+    } else {
+        println!("Decoded video-only segment: {}x{}", decoded.width, decoded.height);
     }
 }

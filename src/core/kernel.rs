@@ -401,6 +401,7 @@ pub struct VcdKernel {
     pub pbc_digit_buffer: Vec<u8>,
     pub pbc_digit_timestamp: Option<Instant>,
     pub pbc_last_tick: Option<Instant>,
+    pub segment_audio_playing: bool,
 }
 
 impl VcdKernel {
@@ -439,6 +440,7 @@ impl VcdKernel {
             pbc_digit_buffer: Vec::new(),
             pbc_digit_timestamp: None,
             pbc_last_tick: None,
+            segment_audio_playing: false,
         }
     }
 
@@ -854,10 +856,22 @@ impl VcdKernel {
                 self.run_vm();
             }
 
+            self.segment_audio_playing = false;
             Ok(true)
         } else {
+            self.segment_audio_playing = false;
             Ok(false)
         }
+    }
+
+    /// Sets the active audio channel mode (Stereo, LeftOnly, RightOnly)
+    /// across active video playback and segment audio.
+    pub fn set_channel_mode(&mut self, mode: crate::audio::AudioChannelMode) {
+        self.channel_mode = mode;
+        if let Some(ref mut player) = self.active_video {
+            player.set_channel_mode(mode);
+        }
+        self.audio.set_channel_mode(mode);
     }
 
     /// Checks if current disc supports VCD 3.0 Interactive mode.
@@ -968,6 +982,7 @@ impl VcdKernel {
                     v.stop();
                 }
                 self.audio.stop_all();
+                self.segment_audio_playing = false;
                 self.vm.terminate();
                 self.current_page = None;
                 self.current_page_name.clear();
@@ -1071,6 +1086,19 @@ impl VcdKernel {
         }
 
         if !self.is_video_active() {
+            // Check if segment audio was playing and has just completed
+            if self.segment_audio_playing && !self.audio.is_bgm_playing() {
+                self.segment_audio_playing = false;
+                if let Some(ref mut pbc) = self.pbc {
+                    if matches!(pbc.state, crate::vcd::PbcState::InPlayList { .. }) {
+                        if let Some(action) = pbc.on_item_finished() {
+                            self.execute_pbc_action(action)?;
+                            return Ok(true);
+                        }
+                    }
+                }
+            }
+
             if let Some(ref mut pbc) = self.pbc {
                 if let Some(action) = pbc.tick(dt_secs) {
                     self.execute_pbc_action(action)?;
@@ -1116,6 +1144,7 @@ impl VcdKernel {
         match action {
             crate::vcd::PbcAction::PlayTrack { track_number, item_id, ptime, .. } => {
                 self.pbc_last_tick = None;
+                self.segment_audio_playing = false;
                 self.current_page = None;
                 self.current_page_name.clear();
                 let track_idx = self.tracks.iter().position(|t| {
@@ -1137,12 +1166,23 @@ impl VcdKernel {
                 if let Some(mut v) = self.active_video.take() {
                     v.stop();
                 }
+                self.audio.stop_all();
+                self.segment_audio_playing = false;
                 self.pbc_last_tick = Some(Instant::now());
                 self.current_page = None;
                 self.current_page_name = format!("PBC 菜单 (ITEM{:04}.DAT)", segment_index);
                 if let Some(seg_path) = crate::vcd::resolve_segment_path(&self.disc_root, item_id) {
-                    let (w, h, rgba) = crate::vcd::decode_segment_frame(&seg_path)?;
-                    crate::vcd::blit_segment_to_canvas(w, h, &rgba, &mut self.canvas);
+                    let decoded = crate::vcd::decode_segment_item(&seg_path)?;
+                    crate::vcd::blit_segment_to_canvas(
+                        decoded.width,
+                        decoded.height,
+                        &decoded.rgba,
+                        &mut self.canvas,
+                    );
+                    if let Some((sample_rate, samples)) = decoded.audio {
+                        self.audio.play_segment_audio(sample_rate, samples, self.channel_mode);
+                        self.segment_audio_playing = true;
+                    }
                     Ok(())
                 } else {
                     Err(format!("未找到段菜单文件: ITEM{:04}.DAT", segment_index))
@@ -1150,6 +1190,7 @@ impl VcdKernel {
             }
             crate::vcd::PbcAction::PlayMotionMenu { track_number, item_id, .. } => {
                 self.pbc_last_tick = None;
+                self.segment_audio_playing = false;
                 self.current_page = None;
                 let track_idx = self.tracks.iter().position(|t| {
                     t.track_no == track_number
@@ -1171,6 +1212,8 @@ impl VcdKernel {
             crate::vcd::PbcAction::End => {
                 self.pbc_last_tick = None;
                 let _ = self.stop_video_and_exit();
+                self.audio.stop_all();
+                self.segment_audio_playing = false;
                 for chunk in self.canvas.chunks_exact_mut(4) {
                     chunk[0] = 0;
                     chunk[1] = 0;

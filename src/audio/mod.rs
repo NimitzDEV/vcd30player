@@ -12,6 +12,7 @@ pub struct AudioManager {
     bgm_sink: Option<Sink>,
     sfx_sink: Option<Sink>,
     sound_cache: HashMap<String, Vec<u8>>,
+    segment_audio_cache: Option<(u32, Vec<f32>)>,
 }
 
 impl AudioManager {
@@ -23,6 +24,7 @@ impl AudioManager {
             bgm_sink: None,
             sfx_sink: None,
             sound_cache: HashMap::new(),
+            segment_audio_cache: None,
         }
     }
 
@@ -45,6 +47,7 @@ impl AudioManager {
                 bgm_sink: None,
                 sfx_sink: None,
                 sound_cache: HashMap::new(),
+                segment_audio_cache: None,
             },
             Err(e) => {
                 eprintln!("[AudioManager] Warning: Audio output device unavailable (falling back to silent mode): {}", e);
@@ -196,8 +199,63 @@ impl AudioManager {
 
     /// Stops currently playing background music.
     pub fn stop_bgm(&mut self) {
+        self.segment_audio_cache = None;
         if let Some(sink) = self.bgm_sink.take() {
             sink.stop();
+        }
+    }
+
+    /// Plays segment audio (interleaved stereo f32 samples at `sample_rate`).
+    /// Stops any previous background audio before playback.
+    pub fn play_segment_audio(
+        &mut self,
+        sample_rate: u32,
+        mut samples: Vec<f32>,
+        channel_mode: AudioChannelMode,
+    ) {
+        self.stop_bgm();
+
+        let Some(handle) = &self.stream_handle else {
+            return;
+        };
+
+        if samples.is_empty() || sample_rate == 0 {
+            return;
+        }
+
+        self.segment_audio_cache = Some((sample_rate, samples.clone()));
+
+        channel_mode.apply_to_interleaved_samples(&mut samples);
+        let source = rodio::buffer::SamplesBuffer::new(2, sample_rate, samples);
+
+        match Sink::try_new(handle) {
+            Ok(sink) => {
+                sink.append(source);
+                self.bgm_sink = Some(sink);
+            }
+            Err(e) => {
+                eprintln!("[AudioManager] Failed to create segment audio sink: {}", e);
+            }
+        }
+    }
+
+    /// Updates channel mode. If segment audio is currently playing, re-applies channel mode.
+    pub fn set_channel_mode(&mut self, mode: AudioChannelMode) {
+        if self.is_bgm_playing() {
+            if let Some((sample_rate, ref raw_samples)) = self.segment_audio_cache {
+                let Some(handle) = &self.stream_handle else {
+                    return;
+                };
+                let mut samples = raw_samples.clone();
+                mode.apply_to_interleaved_samples(&mut samples);
+                let source = rodio::buffer::SamplesBuffer::new(2, sample_rate, samples);
+                if let Ok(sink) = Sink::try_new(handle) {
+                    sink.append(source);
+                    if let Some(old) = self.bgm_sink.replace(sink) {
+                        old.stop();
+                    }
+                }
+            }
         }
     }
 

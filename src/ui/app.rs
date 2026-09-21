@@ -869,10 +869,8 @@ impl VcdPlayerApp {
                         )
                         .on_hover_text(self.i18n.t_fmt("controls.channel_tooltip", &[ch_desc]));
                     if channel_btn.clicked() {
-                        self.kernel.channel_mode = self.kernel.channel_mode.cycle();
-                        if let Some(ref mut player) = self.kernel.active_video {
-                            player.set_channel_mode(self.kernel.channel_mode);
-                        }
+                        let next_mode = self.kernel.channel_mode.cycle();
+                        self.kernel.set_channel_mode(next_mode);
                         let osd_label = match self.kernel.channel_mode {
                             crate::audio::AudioChannelMode::Stereo => "AUDIO: STEREO",
                             crate::audio::AudioChannelMode::LeftOnly => "AUDIO: LEFT",
@@ -1133,10 +1131,8 @@ impl VcdPlayerApp {
         }
 
         if toggle_channel {
-            self.kernel.channel_mode = self.kernel.channel_mode.cycle();
-            if let Some(ref mut player) = self.kernel.active_video {
-                player.set_channel_mode(self.kernel.channel_mode);
-            }
+            let next_mode = self.kernel.channel_mode.cycle();
+            self.kernel.set_channel_mode(next_mode);
             let osd_label = match self.kernel.channel_mode {
                 crate::audio::AudioChannelMode::Stereo => "AUDIO: STEREO",
                 crate::audio::AudioChannelMode::LeftOnly => "AUDIO: LEFT",

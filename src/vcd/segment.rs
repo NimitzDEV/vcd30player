@@ -22,9 +22,19 @@ pub fn resolve_segment_path(disc_root: &Path, item_id: u16) -> Option<PathBuf> {
     find_path_ci(disc_root, &["SEGMENT", &file_name])
 }
 
-/// Decodes the primary still picture frame from a `/SEGMENT/ITEMxxxx.DAT` file.
-/// Returns `(width, height, rgba_buffer)`.
-pub fn decode_segment_frame(dat_path: &Path) -> Result<(u32, u32, Vec<u8>), String> {
+/// Decoded segment play item data containing still/primary video frame and optional accompanying audio.
+#[derive(Debug, Clone)]
+pub struct DecodedSegment {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+    /// Accompanying audio stream if present: `(sample_rate, interleaved_stereo_f32_samples)`.
+    pub audio: Option<(u32, Vec<f32>)>,
+}
+
+/// Decodes a segment item (`/SEGMENT/ITEMxxxx.DAT`), extracting both the still video frame
+/// and any accompanying audio stream (Still Picture with Audio / SPwA).
+pub fn decode_segment_item(dat_path: &Path) -> Result<DecodedSegment, String> {
     let bytes = std::fs::read(dat_path)
         .map_err(|e| format!("Failed to read segment file {}: {}", dat_path.display(), e))?;
 
@@ -39,7 +49,33 @@ pub fn decode_segment_frame(dat_path: &Path) -> Result<(u32, u32, Vec<u8>), Stri
         return Err(format!("Failed to decode video frame from {}", dat_path.display()));
     }
 
-    Ok((w, h, rgba))
+    let audio = if decoder.has_audio() {
+        let sample_rate = decoder.samplerate();
+        let mut samples = Vec::new();
+        while let Some(audio_chunk) = decoder.decode_audio_samples() {
+            samples.extend_from_slice(&audio_chunk.samples);
+        }
+        if samples.is_empty() {
+            None
+        } else {
+            Some((sample_rate, samples))
+        }
+    } else {
+        None
+    };
+
+    Ok(DecodedSegment {
+        width: w,
+        height: h,
+        rgba,
+        audio,
+    })
+}
+
+/// Convenience wrapper for decoding just the video frame of a segment item.
+pub fn decode_segment_frame(dat_path: &Path) -> Result<(u32, u32, Vec<u8>), String> {
+    let item = decode_segment_item(dat_path)?;
+    Ok((item.width, item.height, item.rgba))
 }
 
 /// Downsamples a 704x576 PAL still picture menu directly to the standard 352x288 canvas
@@ -117,5 +153,29 @@ mod tests {
     fn test_resolve_segment_path() {
         let root = Path::new("dummy_root");
         assert_eq!(resolve_segment_path(root, 999), None);
+        assert_eq!(resolve_segment_path(root, 1000), None);
+    }
+
+    #[test]
+    fn test_decode_segment_item_nonexistent() {
+        let path = Path::new("non_existent_item0001.dat");
+        let res = decode_segment_item(path);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_decoded_segment_struct_fields() {
+        let seg = DecodedSegment {
+            width: 352,
+            height: 288,
+            rgba: vec![0u8; 352 * 288 * 4],
+            audio: Some((44100, vec![0.0f32; 1152 * 2])),
+        };
+        assert_eq!(seg.width, 352);
+        assert_eq!(seg.height, 288);
+        assert!(seg.audio.is_some());
+        let (sr, samples) = seg.audio.unwrap();
+        assert_eq!(sr, 44100);
+        assert_eq!(samples.len(), 2304);
     }
 }

@@ -249,6 +249,7 @@ fn test_ui_status_duration_and_no_path() {
     kernel.open_disc(disc_path.clone()).expect("Failed to open disc");
 
     let mut app = vcd30_player::ui::app::VcdPlayerApp::from_kernel(kernel);
+    app.i18n.set_language("zh-CN".to_string());
     // Reset disc using headless egui Context
     let ctx = vcd30_player::egui::Context::default();
     app.reset_disc(&ctx);
@@ -476,6 +477,7 @@ fn test_navigation_buttons_visibility_in_vcd10_vcd20_and_vcd30() {
     kernel.open_disc(disc_path).unwrap();
 
     let mut app = vcd30_player::ui::app::VcdPlayerApp::from_kernel(kernel);
+    app.i18n.set_language("zh-CN".to_string());
     let ctx = vcd30_player::egui::Context::default();
 
     let raw_input = vcd30_player::egui::RawInput {

@@ -738,3 +738,283 @@ fn test_paradise_disc_extended_pbc() {
         _ => panic!("LID 2 must be SelectionList"),
     }
 }
+
+#[test]
+fn test_pbc_waiting_delay_ticking_and_infinite_wait() {
+    let mut raw_lot = vec![0u8; 16];
+    raw_lot[2] = 0; raw_lot[3] = 0; // LID 1 -> unit 0
+    raw_lot[4] = 0; raw_lot[5] = 2; // LID 2 -> unit 2
+    let lot = LotTable::parse(&raw_lot, 8).unwrap();
+
+    let mut raw_psd = Vec::new();
+    // 1. PlayList LID 1 at unit 0 (byte 0) with wtime = 3 seconds, next = unit 2
+    raw_psd.push(0x10);
+    raw_psd.push(1);
+    raw_psd.extend_from_slice(&1u16.to_be_bytes()); // lid 1
+    raw_psd.extend_from_slice(&0xFFFFu16.to_be_bytes()); // prev
+    raw_psd.extend_from_slice(&2u16.to_be_bytes()); // next = unit 2
+    raw_psd.extend_from_slice(&0xFFFFu16.to_be_bytes()); // ret
+    raw_psd.extend_from_slice(&0u16.to_be_bytes());
+    raw_psd.push(3); // wtime = 3 seconds
+    raw_psd.push(0);
+    raw_psd.extend_from_slice(&2u16.to_be_bytes()); // track 2
+
+    // 2. PlayList LID 2 at unit 2 (byte 16) with wtime = 255 (infinite wait), next = 0xFFFF
+    raw_psd.push(0x10);
+    raw_psd.push(1);
+    raw_psd.extend_from_slice(&2u16.to_be_bytes()); // lid 2
+    raw_psd.extend_from_slice(&0u16.to_be_bytes()); // prev = unit 0
+    raw_psd.extend_from_slice(&0xFFFFu16.to_be_bytes()); // next = None
+    raw_psd.extend_from_slice(&0u16.to_be_bytes()); // ret = unit 0
+    raw_psd.extend_from_slice(&0u16.to_be_bytes());
+    raw_psd.push(255); // wtime = 255 (infinite wait)
+    raw_psd.push(0);
+    raw_psd.extend_from_slice(&3u16.to_be_bytes()); // track 3
+
+    let psd = PsdTable::parse(&raw_psd, 8).unwrap();
+    let mut engine = PbcEngine::new(lot, psd);
+
+    let act1 = engine.start().expect("start action");
+    assert_eq!(act1, PbcAction::PlayTrack { track_number: 2, item_id: 2, ptime: 0, wtime: 3 });
+
+    // Track 2 finishes playing -> enters WaitingDelay for 3 seconds
+    let finish_act = engine.on_item_finished();
+    assert!(finish_act.is_none(), "should wait for wtime instead of immediately transitioning");
+    assert!(engine.has_active_timer(), "engine must have active timer during wtime delay");
+    assert_eq!(engine.remaining_timer_seconds(), Some(3.0));
+
+    // Step 1.0 second
+    assert!(engine.tick(1.0).is_none());
+    assert!(engine.has_active_timer());
+    assert!((engine.remaining_timer_seconds().unwrap() - 2.0).abs() < 1e-4);
+
+    // Step 1.5 seconds (remaining 0.5s)
+    assert!(engine.tick(1.5).is_none());
+    assert!(engine.has_active_timer());
+    assert!((engine.remaining_timer_seconds().unwrap() - 0.5).abs() < 1e-4);
+
+    // Step 0.6 seconds (remaining <= 0) -> delay expires, advances to next descriptor (LID 2)!
+    let act2 = engine.tick(0.6).expect("delay expiration triggers next descriptor");
+    assert_eq!(act2, PbcAction::PlayTrack { track_number: 3, item_id: 3, ptime: 0, wtime: 255 });
+
+    // Track 3 finishes playing -> wtime = 255 (infinite wait)
+    let finish_act2 = engine.on_item_finished();
+    assert!(finish_act2.is_none());
+    assert!(!engine.has_active_timer(), "infinite wait delay (wtime=255) has no countdown timer");
+    assert_eq!(engine.remaining_timer_seconds(), None);
+
+    // Ticking any amount of time during infinite wait should never fire
+    assert!(engine.tick(100.0).is_none());
+    assert!(engine.tick(5000.0).is_none());
+    match &engine.state {
+        PbcState::WaitingDelay { remaining_wait, .. } => {
+            assert!(remaining_wait.is_infinite());
+        }
+        _ => panic!("state must remain WaitingDelay with infinite wait"),
+    }
+}
+
+#[test]
+fn test_pbc_selection_timeout_ticking_and_infinite_timeout() {
+    let mut raw_lot = vec![0u8; 16];
+    raw_lot[2] = 0; raw_lot[3] = 0; // LID 1 -> unit 0
+    raw_lot[4] = 0; raw_lot[5] = 3; // LID 2 -> unit 3
+    raw_lot[6] = 0; raw_lot[7] = 6; // LID 3 -> unit 6
+    let lot = LotTable::parse(&raw_lot, 8).unwrap();
+
+    let mut raw_psd = Vec::new();
+    // 1. SelectionList LID 1 at unit 0 (byte 0): timeout_time = 4s, timeout_ofs = unit 3
+    raw_psd.push(0x18);
+    raw_psd.push(0);
+    raw_psd.push(1); // nos = 1
+    raw_psd.push(1); // bsn = 1
+    raw_psd.extend_from_slice(&1u16.to_be_bytes()); // lid 1
+    raw_psd.extend_from_slice(&0xFFFFu16.to_be_bytes()); // prev
+    raw_psd.extend_from_slice(&0xFFFFu16.to_be_bytes()); // next
+    raw_psd.extend_from_slice(&0xFFFFu16.to_be_bytes()); // ret
+    raw_psd.extend_from_slice(&0xFFFFu16.to_be_bytes()); // def
+    raw_psd.extend_from_slice(&3u16.to_be_bytes()); // timeout_ofs = unit 3
+    raw_psd.push(4); // timeout_time = 4s
+    raw_psd.push(1);
+    raw_psd.extend_from_slice(&1000u16.to_be_bytes()); // ITEM0001.DAT
+    raw_psd.extend_from_slice(&6u16.to_be_bytes()); // sel 1 -> unit 6
+    while raw_psd.len() % 8 != 0 {
+        raw_psd.push(0);
+    }
+
+    // 2. SelectionList LID 2 at unit 3 (byte 24): timeout_time = 2s, timeout_ofs = 0xFFFF (no timeout action)
+    raw_psd.push(0x18);
+    raw_psd.push(0);
+    raw_psd.push(1);
+    raw_psd.push(1);
+    raw_psd.extend_from_slice(&2u16.to_be_bytes()); // lid 2
+    raw_psd.extend_from_slice(&0u16.to_be_bytes()); // prev = unit 0
+    raw_psd.extend_from_slice(&0xFFFFu16.to_be_bytes());
+    raw_psd.extend_from_slice(&0u16.to_be_bytes());
+    raw_psd.extend_from_slice(&0xFFFFu16.to_be_bytes());
+    raw_psd.extend_from_slice(&0xFFFFu16.to_be_bytes()); // timeout_ofs = 0xFFFF!
+    raw_psd.push(2); // timeout_time = 2s
+    raw_psd.push(1);
+    raw_psd.extend_from_slice(&1001u16.to_be_bytes()); // ITEM0002.DAT
+    raw_psd.extend_from_slice(&6u16.to_be_bytes()); // sel 1 -> unit 6
+    while raw_psd.len() % 8 != 0 {
+        raw_psd.push(0);
+    }
+
+    // 3. PlayList LID 3 at unit 6 (byte 48)
+    raw_psd.push(0x10);
+    raw_psd.push(1);
+    raw_psd.extend_from_slice(&3u16.to_be_bytes()); // lid 3
+    raw_psd.extend_from_slice(&3u16.to_be_bytes());
+    raw_psd.extend_from_slice(&0xFFFFu16.to_be_bytes());
+    raw_psd.extend_from_slice(&0u16.to_be_bytes());
+    raw_psd.extend_from_slice(&0u16.to_be_bytes());
+    raw_psd.push(0);
+    raw_psd.push(0);
+    raw_psd.extend_from_slice(&2u16.to_be_bytes()); // track 2
+    while raw_psd.len() % 8 != 0 {
+        raw_psd.push(0);
+    }
+
+    let psd = PsdTable::parse(&raw_psd, 8).unwrap();
+    let mut engine = PbcEngine::new(lot, psd);
+
+    let act1 = engine.start().expect("start action");
+    assert_eq!(act1, PbcAction::DisplayStillMenu { item_id: 1000, segment_index: 1, nos: 1, bsn: 1, timeout_sec: 4 });
+    assert!(engine.has_active_timer());
+    assert_eq!(engine.remaining_timer_seconds(), Some(4.0));
+
+    // Tick 2.0s -> remaining 2.0s
+    assert!(engine.tick(2.0).is_none());
+    assert!(engine.has_active_timer());
+    assert!((engine.remaining_timer_seconds().unwrap() - 2.0).abs() < 1e-4);
+
+    // Tick 2.1s -> fires timeout to unit 3 (LID 2)!
+    let act2 = engine.tick(2.1).expect("timeout fires action");
+    assert_eq!(act2, PbcAction::DisplayStillMenu { item_id: 1001, segment_index: 2, nos: 1, bsn: 1, timeout_sec: 2 });
+    assert!(engine.has_active_timer());
+    assert_eq!(engine.remaining_timer_seconds(), Some(2.0));
+
+    // LID 2 has timeout_ofs = 0xFFFF; when timeout expires, it should not jump and should stop the timer
+    let act3 = engine.tick(2.5);
+    assert!(act3.is_none(), "timeout_ofs == 0xFFFF should not trigger action");
+    assert!(!engine.has_active_timer(), "timer must be deactivated after expiring with 0xFFFF offset");
+    assert_eq!(engine.remaining_timer_seconds(), None);
+}
+
+#[test]
+fn test_kernel_pbc_clock_driver_and_waiting_delay() {
+    let mut raw_lot = vec![0u8; 16];
+    raw_lot[2] = 0; raw_lot[3] = 0; // LID 1 -> unit 0
+    raw_lot[4] = 0; raw_lot[5] = 2; // LID 2 -> unit 2
+    let lot = LotTable::parse(&raw_lot, 8).unwrap();
+
+    let mut raw_psd = Vec::new();
+    // 1. PlayList LID 1 at unit 0: wtime = 2 seconds, next = unit 2 (EndList)
+    raw_psd.push(0x10);
+    raw_psd.push(1);
+    raw_psd.extend_from_slice(&1u16.to_be_bytes());
+    raw_psd.extend_from_slice(&0xFFFFu16.to_be_bytes());
+    raw_psd.extend_from_slice(&2u16.to_be_bytes()); // next = unit 2
+    raw_psd.extend_from_slice(&0xFFFFu16.to_be_bytes());
+    raw_psd.extend_from_slice(&0u16.to_be_bytes());
+    raw_psd.push(2); // wtime = 2 seconds
+    raw_psd.push(0);
+    raw_psd.extend_from_slice(&2u16.to_be_bytes());
+    while raw_psd.len() % 8 != 0 {
+        raw_psd.push(0);
+    }
+
+    // 2. EndList at unit 2 (byte 16)
+    raw_psd.push(0x1F);
+    raw_psd.push(0);
+    raw_psd.extend_from_slice(&0u16.to_be_bytes());
+    raw_psd.extend_from_slice(&[0u8; 4]); // pad to 8 bytes
+    while raw_psd.len() % 8 != 0 {
+        raw_psd.push(0);
+    }
+
+    let psd = PsdTable::parse(&raw_psd, 8).unwrap();
+
+    let mut kernel = VcdKernel::new();
+    kernel.active_mode = ActiveDiscMode::Vcd20Classic;
+    let mut pbc = PbcEngine::new(lot, psd);
+    let _ = pbc.start();
+    // Finish item to enter WaitingDelay
+    assert!(pbc.on_item_finished().is_none());
+    kernel.pbc = Some(pbc);
+
+    assert!(kernel.has_active_pbc_timer(), "kernel must report active PBC timer");
+
+    // Tick 1.0s -> does not expire yet
+    let fired = kernel.tick_pbc(1.0).expect("tick_pbc");
+    assert!(!fired);
+    assert!(kernel.has_active_pbc_timer());
+
+    // Tick 1.5s -> expires! Executes EndList and returns true
+    let fired2 = kernel.tick_pbc(1.5).expect("tick_pbc");
+    assert!(fired2, "waiting delay expiration must execute EndList action");
+    assert!(!kernel.has_active_pbc_timer(), "state after End must have no active timer");
+
+    // In Vcd10Linear mode, tick_pbc is ignored
+    kernel.active_mode = ActiveDiscMode::Vcd10Linear;
+    assert!(!kernel.has_active_pbc_timer());
+    assert_eq!(kernel.tick_pbc(1.0).unwrap(), false);
+}
+
+#[test]
+fn test_kernel_pbc_clock_driver_selection_timeout_to_end() {
+    let mut raw_lot = vec![0u8; 16];
+    raw_lot[2] = 0; raw_lot[3] = 0; // LID 1 -> unit 0
+    raw_lot[4] = 0; raw_lot[5] = 3; // LID 2 -> unit 3
+    let lot = LotTable::parse(&raw_lot, 8).unwrap();
+
+    let mut raw_psd = Vec::new();
+    // 1. SelectionList LID 1 at unit 0: timeout = 3s, timeout_ofs = unit 3 (EndList)
+    raw_psd.push(0x18);
+    raw_psd.push(0);
+    raw_psd.push(1);
+    raw_psd.push(1);
+    raw_psd.extend_from_slice(&1u16.to_be_bytes());
+    raw_psd.extend_from_slice(&0xFFFFu16.to_be_bytes());
+    raw_psd.extend_from_slice(&0xFFFFu16.to_be_bytes());
+    raw_psd.extend_from_slice(&0xFFFFu16.to_be_bytes());
+    raw_psd.extend_from_slice(&0xFFFFu16.to_be_bytes());
+    raw_psd.extend_from_slice(&3u16.to_be_bytes()); // timeout -> unit 3
+    raw_psd.push(3); // 3s
+    raw_psd.push(1);
+    raw_psd.extend_from_slice(&1000u16.to_be_bytes());
+    raw_psd.extend_from_slice(&3u16.to_be_bytes());
+    while raw_psd.len() % 8 != 0 {
+        raw_psd.push(0);
+    }
+
+    // 2. EndList at unit 3 (byte 24)
+    raw_psd.push(0x1F);
+    raw_psd.push(0);
+    raw_psd.extend_from_slice(&0u16.to_be_bytes());
+    raw_psd.extend_from_slice(&[0u8; 4]);
+    while raw_psd.len() % 8 != 0 {
+        raw_psd.push(0);
+    }
+
+    let psd = PsdTable::parse(&raw_psd, 8).unwrap();
+
+    let mut kernel = VcdKernel::new();
+    kernel.active_mode = ActiveDiscMode::Vcd20Classic;
+    let mut pbc = PbcEngine::new(lot, psd);
+    let _ = pbc.start(); // starts LID 1
+    kernel.pbc = Some(pbc);
+
+    assert!(kernel.has_active_pbc_timer(), "kernel must report active SelectionList timeout");
+
+    // Tick 1.5s
+    let fired = kernel.tick_pbc(1.5).expect("tick_pbc");
+    assert!(!fired);
+    assert!(kernel.has_active_pbc_timer());
+
+    // Tick 2.0s -> expires! Executes EndList and returns true
+    let fired2 = kernel.tick_pbc(2.0).expect("tick_pbc");
+    assert!(fired2, "timeout must trigger EndList action");
+    assert!(!kernel.has_active_pbc_timer(), "after End, timer is inactive");
+}

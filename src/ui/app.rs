@@ -522,6 +522,29 @@ impl VcdPlayerApp {
             }
             ctx.request_repaint();
         } else {
+            if self.kernel.active_mode == crate::core::kernel::ActiveDiscMode::Vcd20Classic {
+                match self.kernel.update_pbc() {
+                    Ok(true) => {
+                        self.texture = None;
+                        self.texture_dirty = true;
+                        if self.kernel.is_video_active() {
+                            self.refresh_video_texture(&ctx);
+                        } else {
+                            self.refresh_texture(&ctx);
+                        }
+                        ctx.request_repaint();
+                    }
+                    Ok(false) => {
+                        if self.kernel.has_active_pbc_timer() {
+                            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+                        }
+                    }
+                    Err(e) => {
+                        self.set_status(format!("PBC: {}", e));
+                    }
+                }
+            }
+
             if self.kernel.is_vm_active() {
                 self.kernel.run_vm();
                 self.texture_dirty = true;

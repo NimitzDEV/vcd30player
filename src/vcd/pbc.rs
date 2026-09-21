@@ -255,6 +255,10 @@ impl PbcEngine {
                         None
                     } else if desc_clone.wtime == 255 {
                         // Infinite wait until user presses Next/Prev/Return
+                        self.state = PbcState::WaitingDelay {
+                            desc: desc_clone.clone(),
+                            remaining_wait: f32::INFINITY,
+                        };
                         None
                     } else {
                         // Immediate transition to next descriptor
@@ -290,6 +294,9 @@ impl PbcEngine {
                 desc,
                 remaining_wait,
             } => {
+                if !remaining_wait.is_finite() {
+                    return None;
+                }
                 *remaining_wait -= dt_secs;
                 if *remaining_wait <= 0.0 {
                     let next_ofs = desc.next_ofs;
@@ -315,11 +322,32 @@ impl PbcEngine {
                         let to_ofs = desc.timeout_ofs;
                         if to_ofs != 0xFFFF {
                             return self.execute_descriptor_at_unit_offset(to_ofs);
+                        } else {
+                            *remaining_timeout = None;
                         }
                     }
                 }
                 None
             }
+            _ => None,
+        }
+    }
+
+    /// Returns true if the PBC state machine is currently waiting on an active timer
+    /// (e.g. menu timeout or track completion delay).
+    pub fn has_active_timer(&self) -> bool {
+        match &self.state {
+            PbcState::WaitingDelay { remaining_wait, .. } => remaining_wait.is_finite() && *remaining_wait > 0.0,
+            PbcState::InSelection { remaining_timeout, .. } => remaining_timeout.is_some(),
+            _ => false,
+        }
+    }
+
+    /// Returns remaining wait or timeout duration in seconds, if active.
+    pub fn remaining_timer_seconds(&self) -> Option<f32> {
+        match &self.state {
+            PbcState::WaitingDelay { remaining_wait, .. } if remaining_wait.is_finite() => Some(*remaining_wait),
+            PbcState::InSelection { remaining_timeout, .. } => *remaining_timeout,
             _ => None,
         }
     }

@@ -400,6 +400,7 @@ pub struct VcdKernel {
     pub pbc: Option<crate::vcd::PbcEngine>,
     pub pbc_digit_buffer: Vec<u8>,
     pub pbc_digit_timestamp: Option<Instant>,
+    pub pbc_last_tick: Option<Instant>,
 }
 
 impl VcdKernel {
@@ -437,6 +438,7 @@ impl VcdKernel {
             pbc: None,
             pbc_digit_buffer: Vec::new(),
             pbc_digit_timestamp: None,
+            pbc_last_tick: None,
         }
     }
 
@@ -636,6 +638,7 @@ impl VcdKernel {
         self.karaoke_playlist.clear();
         self.pbc = None;
         self.pbc_digit_buffer.clear();
+        self.pbc_last_tick = None;
 
         let disc_type = crate::vcd::detect_disc(&self.disc_root);
         self.disc_type = Some(disc_type.clone());
@@ -968,6 +971,7 @@ impl VcdKernel {
                 self.vm.terminate();
                 self.current_page = None;
                 self.current_page_name.clear();
+                self.pbc_last_tick = None;
                 for chunk in self.canvas.chunks_exact_mut(4) {
                     chunk[0] = 0;
                     chunk[1] = 0;
@@ -1020,6 +1024,7 @@ impl VcdKernel {
 
         self.pbc = Some(crate::vcd::PbcEngine::new(lot, psd));
         self.pbc_digit_buffer.clear();
+        self.pbc_last_tick = None;
         Ok(())
     }
 
@@ -1058,10 +1063,59 @@ impl VcdKernel {
         self.execute_pbc_action(action)
     }
 
+    /// Advances the PBC state machine by `dt_secs` if active and not playing full motion video.
+    /// Returns `Ok(true)` if a timer fired and resulted in an action being executed.
+    pub fn tick_pbc(&mut self, dt_secs: f32) -> Result<bool, String> {
+        if self.active_mode != ActiveDiscMode::Vcd20Classic {
+            return Ok(false);
+        }
+
+        if !self.is_video_active() {
+            if let Some(ref mut pbc) = self.pbc {
+                if let Some(action) = pbc.tick(dt_secs) {
+                    self.execute_pbc_action(action)?;
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    /// Advances the PBC state machine using real elapsed wall-clock time since last tick.
+    pub fn update_pbc(&mut self) -> Result<bool, String> {
+        if self.active_mode != ActiveDiscMode::Vcd20Classic {
+            self.pbc_last_tick = None;
+            return Ok(false);
+        }
+
+        let now = Instant::now();
+        let dt = if let Some(prev) = self.pbc_last_tick {
+            (now - prev).as_secs_f32().clamp(0.0, 0.5)
+        } else {
+            0.0
+        };
+        self.pbc_last_tick = Some(now);
+
+        if dt > 0.0 {
+            self.tick_pbc(dt)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Returns true if the PBC state machine has an active countdown timer running.
+    pub fn has_active_pbc_timer(&self) -> bool {
+        if self.active_mode != ActiveDiscMode::Vcd20Classic {
+            return false;
+        }
+        self.pbc.as_ref().map(|p| p.has_active_timer()).unwrap_or(false)
+    }
+
     /// Executes an action emitted by the PBC state machine.
     pub fn execute_pbc_action(&mut self, action: crate::vcd::PbcAction) -> Result<(), String> {
         match action {
             crate::vcd::PbcAction::PlayTrack { track_number, item_id, .. } => {
+                self.pbc_last_tick = None;
                 self.current_page = None;
                 self.current_page_name.clear();
                 let track_idx = self.tracks.iter().position(|t| {
@@ -1083,6 +1137,7 @@ impl VcdKernel {
                 if let Some(mut v) = self.active_video.take() {
                     v.stop();
                 }
+                self.pbc_last_tick = Some(Instant::now());
                 self.current_page = None;
                 self.current_page_name = format!("PBC 菜单 (ITEM{:04}.DAT)", segment_index);
                 if let Some(seg_path) = crate::vcd::resolve_segment_path(&self.disc_root, item_id) {
@@ -1094,6 +1149,7 @@ impl VcdKernel {
                 }
             }
             crate::vcd::PbcAction::PlayMotionMenu { track_number, item_id, .. } => {
+                self.pbc_last_tick = None;
                 self.current_page = None;
                 let track_idx = self.tracks.iter().position(|t| {
                     t.track_no == track_number
@@ -1113,6 +1169,7 @@ impl VcdKernel {
                 res.map(|_| ())
             }
             crate::vcd::PbcAction::End => {
+                self.pbc_last_tick = None;
                 let _ = self.stop_video_and_exit();
                 for chunk in self.canvas.chunks_exact_mut(4) {
                     chunk[0] = 0;
@@ -1359,6 +1416,7 @@ impl VcdKernel {
             if player.state == VideoPlayState::Ended {
                 if self.active_mode == ActiveDiscMode::Vcd20Classic && self.pbc.is_some() {
                     let _ = self.stop_video_and_exit();
+                    self.pbc_last_tick = Some(Instant::now());
                     if let Some(ref mut pbc) = self.pbc {
                         if let Some(action) = pbc.on_item_finished() {
                             let _ = self.execute_pbc_action(action);

@@ -202,7 +202,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   - Test suite covering unit and integration tests across format parsing, VM execution, audio mixing, and video playback.
   - GitHub Actions CI workflow supporting automated check, test, and clippy runs on Windows and Ubuntu.
 
-[Unreleased]: https://github.com/NimitzDEV/vcd30player/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/NimitzDEV/vcd30player/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/NimitzDEV/vcd30player/compare/v0.5.0...v0.5.1
+[0.5.0]: https://github.com/NimitzDEV/vcd30player/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/NimitzDEV/vcd30player/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/NimitzDEV/vcd30player/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/NimitzDEV/vcd30player/compare/v0.2.0...v0.3.0

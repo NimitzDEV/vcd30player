@@ -202,7 +202,9 @@
   - 测试用例覆盖格式解析、脚本虚拟机、音频与视频播放。
   - 配置 GitHub Actions 工作流，支持 Windows 与 Ubuntu 自动化测试。
 
-[Unreleased]: https://github.com/NimitzDEV/vcd30player/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/NimitzDEV/vcd30player/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/NimitzDEV/vcd30player/compare/v0.5.0...v0.5.1
+[0.5.0]: https://github.com/NimitzDEV/vcd30player/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/NimitzDEV/vcd30player/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/NimitzDEV/vcd30player/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/NimitzDEV/vcd30player/compare/v0.2.0...v0.3.0

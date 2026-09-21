@@ -7,6 +7,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-22
+
+### Added
+- **VCD 2.0 Playback Control (PBC) Engine Enhancements**:
+  - **Runtime Clock Driver Loop**: Connected PBC state machine timing to the main runtime event loop, enabling automatic transitions on selection timeouts and playlist wait delays (`wtime`).
+  - **Playing Time Limit (`ptime`) & Selection Repetition (`loop_count`)**:
+    - Implemented video track playback duration truncation based on `ptime` (1/15th-second units).
+    - Added support for finite and infinite menu repetitions (`loop_count == 0` or `loop_count > 1`) in selection lists before advancing or timing out.
+  - **Segment Audio Playback**:
+    - Integrated MPEG-1 Layer II audio stream decoding and playback for still picture menu items (`ITEMxxxx.DAT` in `SEGMENT/`).
+    - Added real-time stereo, left-channel (accompaniment), and right-channel (vocal) switching for segment audio.
+    - Automatic advancement to the next item or end of list upon segment audio completion.
+  - **Extended Selection List (`0x1A`) Button Hotspot Interaction**:
+    - Decoded normalized coordinate bounding boxes ($0..255$) from extended selection area data and mapped them onto the $352 \times 288$ canvas.
+    - Supported mouse hover with pointing hand cursor feedback and direct click-to-select interaction during both still and motion menus.
+    - Added visual bounding box highlight overlay when the "Show Hotspots" setting is enabled.
+
 ## [0.5.1] - 2026-09-16
 
 ### Added
@@ -202,7 +219,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   - Test suite covering unit and integration tests across format parsing, VM execution, audio mixing, and video playback.
   - GitHub Actions CI workflow supporting automated check, test, and clippy runs on Windows and Ubuntu.
 
-[Unreleased]: https://github.com/NimitzDEV/vcd30player/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/NimitzDEV/vcd30player/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/NimitzDEV/vcd30player/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/NimitzDEV/vcd30player/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/NimitzDEV/vcd30player/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/NimitzDEV/vcd30player/compare/v0.3.1...v0.4.0

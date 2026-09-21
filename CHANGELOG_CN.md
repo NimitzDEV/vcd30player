@@ -7,6 +7,23 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-22
+
+### 新增
+- **VCD 2.0 播放控制 (PBC) 状态机全功能增强**:
+  - **运行时时钟驱动主循环**: 将 PBC 状态机时钟接入主界面事件循环，支持选单超时自动跳转与播放列表等待延迟（`wtime`）自动倒计时推进。
+  - **播放时长限制 (`ptime`) 与选单循环播放 (`loop_count`)**:
+    - 实现基于 1/15 秒时基的轨道精准限时播放（`ptime`），超时自动截断并推进状态机。
+    - 完整支持有限次重复选单与无限循环选单（`loop_count == 0` 或 `loop_count > 1`）重播逻辑。
+  - **静态画面多媒体段伴音播放**:
+    - 支持解析并解码段多媒体项目（`SEGMENT/ITEMxxxx.DAT`）中的首帧高分辨率画面与 MPEG-1 Layer II 伴音音频流。
+    - 支持段伴音的立体声、伴奏（左声道）、原唱（右声道）实时声道路由切换。
+    - 播放列表中的段音频播放完毕后自动触发 `on_item_finished` 推进下一项或结束选单。
+  - **扩展选择列表 (`0x1A`) 按钮热区交互与鼠标选单**:
+    - 解析扩展选单描述符中的归一化按钮矩形坐标（$0..255$）并精准映射至 $352 \times 288$ 画布物理空间。
+    - 在静态选单及动态循环选单播放期间支持鼠标悬停手型光标与直接点击选单编号跳转。
+    - 启用“显示热区”时，在画布上渲染半透明边框与编号角标辅助线框。
+
 ## [0.5.1] - 2026-09-16
 
 ### 新增
@@ -202,7 +219,8 @@
   - 测试用例覆盖格式解析、脚本虚拟机、音频与视频播放。
   - 配置 GitHub Actions 工作流，支持 Windows 与 Ubuntu 自动化测试。
 
-[Unreleased]: https://github.com/NimitzDEV/vcd30player/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/NimitzDEV/vcd30player/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/NimitzDEV/vcd30player/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/NimitzDEV/vcd30player/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/NimitzDEV/vcd30player/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/NimitzDEV/vcd30player/compare/v0.3.1...v0.4.0

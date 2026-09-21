@@ -1114,7 +1114,7 @@ impl VcdKernel {
     /// Executes an action emitted by the PBC state machine.
     pub fn execute_pbc_action(&mut self, action: crate::vcd::PbcAction) -> Result<(), String> {
         match action {
-            crate::vcd::PbcAction::PlayTrack { track_number, item_id, .. } => {
+            crate::vcd::PbcAction::PlayTrack { track_number, item_id, ptime, .. } => {
                 self.pbc_last_tick = None;
                 self.current_page = None;
                 self.current_page_name.clear();
@@ -1123,11 +1123,11 @@ impl VcdKernel {
                         || (item_id >= 2 && item_id <= 99 && t.index == (item_id - 1) as usize)
                 });
                 if let Some(idx) = track_idx {
-                    self.play_track(idx).map_err(|e| e.to_string())?;
+                    self.play_track_with_ptime(idx, ptime).map_err(|e| e.to_string())?;
                     Ok(())
                 } else if !self.tracks.is_empty() {
                     let fallback_idx = (track_number.saturating_sub(2) as usize).min(self.tracks.len() - 1);
-                    self.play_track(fallback_idx).map_err(|e| e.to_string())?;
+                    self.play_track_with_ptime(fallback_idx, ptime).map_err(|e| e.to_string())?;
                     Ok(())
                 } else {
                     Err(format!("未找到 PBC 轨道: {}", track_number))
@@ -1371,6 +1371,18 @@ impl VcdKernel {
         self.start_video(&fname, 0, 0, None)
     }
 
+    /// Plays the track at `track_idx` with an optional playing time limit (`ptime`, in 1/15th second units).
+    /// If `ptime == 0`, plays full track.
+    pub fn play_track_with_ptime(&mut self, track_idx: usize, ptime: u16) -> Result<bool, KernelError> {
+        let res = self.play_track(track_idx)?;
+        if res && ptime > 0 {
+            if let Some(ref mut player) = self.active_video {
+                player.set_max_duration(ptime as f64 / 15.0);
+            }
+        }
+        Ok(res)
+    }
+
     /// Navigates to the previous track (or restarts current if > 3 seconds in).
     pub fn play_prev_track(&mut self) -> Result<bool, KernelError> {
         if self.tracks.is_empty() {
@@ -1415,6 +1427,11 @@ impl VcdKernel {
             let updated = player.update();
             if player.state == VideoPlayState::Ended {
                 if self.active_mode == ActiveDiscMode::Vcd20Classic && self.pbc.is_some() {
+                    let last_frame = player.current_frame().to_vec();
+                    let (vw, vh) = player.dimensions();
+                    if !last_frame.is_empty() && vw > 0 && vh > 0 {
+                        crate::vcd::blit_segment_to_canvas(vw, vh, &last_frame, &mut self.canvas);
+                    }
                     let _ = self.stop_video_and_exit();
                     self.pbc_last_tick = Some(Instant::now());
                     if let Some(ref mut pbc) = self.pbc {

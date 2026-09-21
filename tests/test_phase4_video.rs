@@ -122,4 +122,8 @@ fn test_video_player_playback_and_seek() {
     // Frame buffer check
     let (pw, ph) = player.dimensions();
     assert_eq!(player.current_frame().len(), (pw * ph * 4) as usize);
+
+    // Test capping duration via set_max_duration (ptime support)
+    player.set_max_duration(2.0);
+    assert!((player.clip_end_time() - 2.0).abs() < 1e-4);
 }

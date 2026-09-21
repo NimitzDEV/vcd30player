@@ -42,6 +42,7 @@ pub enum PbcState {
     /// Currently waiting on an interactive SelectionList menu
     InSelection {
         desc: SelectionListDesc,
+        remaining_loops: u8,
         remaining_timeout: Option<f32>,
     },
     /// Currently playing a PlayList item
@@ -215,72 +216,106 @@ impl PbcEngine {
 
     /// Called when the currently active media item finishes playing.
     pub fn on_item_finished(&mut self) -> Option<PbcAction> {
-        match &self.state {
-            PbcState::InPlayList {
+        match &mut self.state {
+            PbcState::InSelection {
                 desc,
-                current_item_index,
+                remaining_loops,
+                remaining_timeout,
             } => {
                 let desc_clone = desc.clone();
-                let next_idx = current_item_index + 1;
-                if next_idx < desc_clone.items.len() {
-                    // Play next item in this playlist
-                    let item_id = desc_clone.items[next_idx];
-                    self.state = PbcState::InPlayList {
-                        desc: desc_clone.clone(),
-                        current_item_index: next_idx,
-                    };
-                    if item_id < 1000 {
-                        Some(PbcAction::PlayTrack {
-                            track_number: item_id as u8,
-                            item_id,
-                            ptime: desc_clone.ptime,
-                            wtime: desc_clone.wtime,
-                        })
-                    } else {
-                        Some(PbcAction::DisplayStillMenu {
-                            item_id,
-                            segment_index: item_id - 999,
-                            nos: 0,
-                            bsn: 0,
-                            timeout_sec: 0,
-                        })
-                    }
+                let is_infinite = (desc_clone.loop_count & 0x7F) == 0;
+
+                if is_infinite {
+                    // 0 means infinite loop: repeat motion menu indefinitely
+                    Some(PbcAction::PlayMotionMenu {
+                        track_number: desc_clone.item_id as u8,
+                        item_id: desc_clone.item_id,
+                        nos: desc_clone.nos,
+                        bsn: desc_clone.bsn,
+                        timeout_sec: desc_clone.timeout_time,
+                    })
+                } else if *remaining_loops > 1 {
+                    // Decrement loop count and repeat motion menu
+                    *remaining_loops -= 1;
+                    Some(PbcAction::PlayMotionMenu {
+                        track_number: desc_clone.item_id as u8,
+                        item_id: desc_clone.item_id,
+                        nos: desc_clone.nos,
+                        bsn: desc_clone.bsn,
+                        timeout_sec: desc_clone.timeout_time,
+                    })
                 } else {
-                    // Playlist finished: check wait time (wtime)
-                    if desc_clone.wtime > 0 && desc_clone.wtime < 255 {
-                        self.state = PbcState::WaitingDelay {
-                            desc: desc_clone.clone(),
-                            remaining_wait: desc_clone.wtime as f32,
-                        };
-                        None
-                    } else if desc_clone.wtime == 255 {
-                        // Infinite wait until user presses Next/Prev/Return
-                        self.state = PbcState::WaitingDelay {
-                            desc: desc_clone.clone(),
-                            remaining_wait: f32::INFINITY,
-                        };
-                        None
+                    // Loops completed (*remaining_loops <= 1)
+                    *remaining_loops = 0;
+                    if desc_clone.timeout_time > 0 {
+                        *remaining_timeout = Some(desc_clone.timeout_time as f32);
                     } else {
-                        // Immediate transition to next descriptor
-                        if desc_clone.next_ofs != 0xFFFF {
-                            self.execute_descriptor_at_unit_offset(desc_clone.next_ofs)
-                        } else if let Some(root_ofs) = self.root_menu_offset {
-                            self.execute_descriptor_at_byte_offset(root_ofs)
-                        } else {
-                            self.state = PbcState::Ended;
-                            Some(PbcAction::End)
-                        }
+                        *remaining_timeout = None;
                     }
+                    None
                 }
             }
-            PbcState::InSelection { desc, .. } => {
-                let desc_clone = desc.clone();
-                // Motion menu finished playing: check loop / timeout
-                if desc_clone.timeout_ofs != 0xFFFF && desc_clone.timeout_time > 0 {
-                    self.execute_descriptor_at_unit_offset(desc_clone.timeout_ofs)
+            PbcState::InPlayList { .. } => {
+                let current_state = std::mem::replace(&mut self.state, PbcState::Uninitialized);
+                if let PbcState::InPlayList {
+                    desc,
+                    current_item_index,
+                } = current_state
+                {
+                    let desc_clone = desc.clone();
+                    let next_idx = current_item_index + 1;
+                    if next_idx < desc_clone.items.len() {
+                        // Play next item in this playlist
+                        let item_id = desc_clone.items[next_idx];
+                        self.state = PbcState::InPlayList {
+                            desc: desc_clone.clone(),
+                            current_item_index: next_idx,
+                        };
+                        if item_id < 1000 {
+                            Some(PbcAction::PlayTrack {
+                                track_number: item_id as u8,
+                                item_id,
+                                ptime: desc_clone.ptime,
+                                wtime: desc_clone.wtime,
+                            })
+                        } else {
+                            Some(PbcAction::DisplayStillMenu {
+                                item_id,
+                                segment_index: item_id - 999,
+                                nos: 0,
+                                bsn: 0,
+                                timeout_sec: 0,
+                            })
+                        }
+                    } else {
+                        // Playlist finished: check wait time (wtime)
+                        if desc_clone.wtime > 0 && desc_clone.wtime < 255 {
+                            self.state = PbcState::WaitingDelay {
+                                desc: desc_clone.clone(),
+                                remaining_wait: desc_clone.wtime as f32,
+                            };
+                            None
+                        } else if desc_clone.wtime == 255 {
+                            // Infinite wait until user presses Next/Prev/Return
+                            self.state = PbcState::WaitingDelay {
+                                desc: desc_clone.clone(),
+                                remaining_wait: f32::INFINITY,
+                            };
+                            None
+                        } else {
+                            // Immediate transition to next descriptor
+                            if desc_clone.next_ofs != 0xFFFF {
+                                self.execute_descriptor_at_unit_offset(desc_clone.next_ofs)
+                            } else if let Some(root_ofs) = self.root_menu_offset {
+                                self.execute_descriptor_at_byte_offset(root_ofs)
+                            } else {
+                                self.state = PbcState::Ended;
+                                Some(PbcAction::End)
+                            }
+                        }
+                    }
                 } else {
-                    // Loop motion menu
-                    self.execute_descriptor(PsdDescriptor::SelectionList(desc_clone))
+                    None
                 }
             }
             _ => None,
@@ -315,6 +350,7 @@ impl PbcEngine {
             PbcState::InSelection {
                 desc,
                 remaining_timeout,
+                ..
             } => {
                 if let Some(timer) = remaining_timeout {
                     *timer -= dt_secs;
@@ -352,6 +388,14 @@ impl PbcEngine {
         }
     }
 
+    /// Returns the remaining loop count for the current SelectionList motion menu, if applicable.
+    pub fn remaining_selection_loops(&self) -> Option<u8> {
+        match &self.state {
+            PbcState::InSelection { remaining_loops, .. } => Some(*remaining_loops),
+            _ => None,
+        }
+    }
+
     /// Transitions to descriptor located at unit offset (multiplied by `offset_mult`).
     pub fn execute_descriptor_at_unit_offset(&mut self, unit_ofs: u16) -> Option<PbcAction> {
         if unit_ofs == 0xFFFF {
@@ -363,19 +407,17 @@ impl PbcEngine {
 
     /// Transitions to descriptor located at byte offset in `PSD.VCD`.
     pub fn execute_descriptor_at_byte_offset(&mut self, byte_ofs: usize) -> Option<PbcAction> {
-        if let Some(desc) = self.psd.get_by_byte_offset(byte_ofs).cloned() {
-            self.current_desc_offset = Some(byte_ofs);
-            self.execute_descriptor(desc)
-        } else {
-            None
-        }
+        self.current_desc_offset = Some(byte_ofs);
+        let desc = self.psd.get_by_byte_offset(byte_ofs)?.clone();
+        self.execute_descriptor(desc)
     }
 
-    /// Executes a given descriptor, updating state and returning the resulting action.
-    fn execute_descriptor(&mut self, desc: PsdDescriptor) -> Option<PbcAction> {
+    /// Executes the given PSD descriptor according to its type.
+    pub fn execute_descriptor(&mut self, desc: PsdDescriptor) -> Option<PbcAction> {
         match desc {
             PsdDescriptor::PlayList(p) => {
                 if p.items.is_empty() {
+                    // Empty playlist: jump immediately to next descriptor
                     if p.next_ofs != 0xFFFF {
                         return self.execute_descriptor_at_unit_offset(p.next_ofs);
                     } else {
@@ -408,10 +450,21 @@ impl PbcEngine {
                 }
             }
             PsdDescriptor::SelectionList(s) => {
-                let timeout = if s.timeout_time > 0 {
-                    Some(s.timeout_time as f32)
+                let is_motion = s.item_id >= 2 && s.item_id <= 99;
+                let raw_loops = s.loop_count & 0x7F;
+
+                let (remaining_loops, remaining_timeout) = if is_motion {
+                    // Motion video menu: loop count controls video repeats;
+                    // timeout countdown is deferred until all loops finish.
+                    (raw_loops, None)
                 } else {
-                    None
+                    // Still picture menu: loop count is ignored, timeout begins immediately.
+                    let timeout = if s.timeout_time > 0 {
+                        Some(s.timeout_time as f32)
+                    } else {
+                        None
+                    };
+                    (0, timeout)
                 };
 
                 let item_id = s.item_id;
@@ -421,7 +474,8 @@ impl PbcEngine {
 
                 self.state = PbcState::InSelection {
                     desc: s,
-                    remaining_timeout: timeout,
+                    remaining_loops,
+                    remaining_timeout,
                 };
 
                 if item_id >= 1000 {

@@ -290,6 +290,14 @@ impl VideoPlayer {
         self.clip_end_time
     }
 
+    /// Caps the playback duration from start to at most `max_duration_secs`.
+    pub fn set_max_duration(&mut self, max_duration_secs: f64) {
+        if max_duration_secs > 0.0 {
+            let target_end = self.clip_start_time + max_duration_secs;
+            self.clip_end_time = self.clip_end_time.min(target_end);
+        }
+    }
+
     pub fn is_playing(&self) -> bool {
         self.state == VideoPlayState::Playing
     }

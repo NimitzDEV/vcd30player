@@ -1018,3 +1018,202 @@ fn test_kernel_pbc_clock_driver_selection_timeout_to_end() {
     assert!(fired2, "timeout must trigger EndList action");
     assert!(!kernel.has_active_pbc_timer(), "after End, timer is inactive");
 }
+
+#[test]
+fn test_pbc_playlist_ptime_action_metadata() {
+    let mut raw_lot = vec![0u8; 16];
+    raw_lot[2] = 0; raw_lot[3] = 0; // LID 1 -> unit 0
+    let lot = LotTable::parse(&raw_lot, 8).unwrap();
+
+    let mut raw_psd = Vec::new();
+    // PlayList LID 1 at unit 0 with ptime = 75 (5.0s in 1/15s units)
+    raw_psd.push(0x10);
+    raw_psd.push(1);
+    raw_psd.extend_from_slice(&1u16.to_be_bytes()); // lid 1
+    raw_psd.extend_from_slice(&0xFFFFu16.to_be_bytes());
+    raw_psd.extend_from_slice(&0xFFFFu16.to_be_bytes());
+    raw_psd.extend_from_slice(&0xFFFFu16.to_be_bytes());
+    raw_psd.extend_from_slice(&75u16.to_be_bytes()); // ptime = 75 (5.0s)
+    raw_psd.push(2); // wtime = 2s
+    raw_psd.push(0);
+    raw_psd.extend_from_slice(&2u16.to_be_bytes()); // track 2
+    while raw_psd.len() % 8 != 0 {
+        raw_psd.push(0);
+    }
+
+    let psd = PsdTable::parse(&raw_psd, 8).unwrap();
+    let mut engine = PbcEngine::new(lot, psd);
+
+    let action = engine.start().expect("start action");
+    assert_eq!(
+        action,
+        PbcAction::PlayTrack {
+            track_number: 2,
+            item_id: 2,
+            ptime: 75,
+            wtime: 2,
+        }
+    );
+}
+
+#[test]
+fn test_pbc_selection_list_loop_count_repetitions() {
+    let mut raw_lot = vec![0u8; 16];
+    raw_lot[2] = 0; raw_lot[3] = 0; // LID 1 -> unit 0
+    raw_lot[4] = 0; raw_lot[5] = 3; // LID 2 -> unit 3
+    let lot = LotTable::parse(&raw_lot, 8).unwrap();
+
+    let mut raw_psd = Vec::new();
+    // 1. SelectionList LID 1 at unit 0: motion menu (item_id = 2), loop_count = 3, timeout = 4s, timeout_ofs = unit 3
+    raw_psd.push(0x18);
+    raw_psd.push(0);
+    raw_psd.push(1); // nos = 1
+    raw_psd.push(1); // bsn = 1
+    raw_psd.extend_from_slice(&1u16.to_be_bytes()); // lid 1
+    raw_psd.extend_from_slice(&0xFFFFu16.to_be_bytes()); // prev
+    raw_psd.extend_from_slice(&0xFFFFu16.to_be_bytes()); // next
+    raw_psd.extend_from_slice(&0xFFFFu16.to_be_bytes()); // ret
+    raw_psd.extend_from_slice(&0xFFFFu16.to_be_bytes()); // def
+    raw_psd.extend_from_slice(&3u16.to_be_bytes()); // timeout_ofs = unit 3 (EndList)
+    raw_psd.push(4); // timeout_time = 4s
+    raw_psd.push(3); // loop_count = 3 (play 3 times)
+    raw_psd.extend_from_slice(&2u16.to_be_bytes()); // item_id = 2 (motion menu track 2)
+    raw_psd.extend_from_slice(&3u16.to_be_bytes()); // sel 1 -> unit 3
+    while raw_psd.len() % 8 != 0 {
+        raw_psd.push(0);
+    }
+
+    // 2. EndList at unit 3 (byte 24)
+    raw_psd.push(0x1F);
+    raw_psd.push(0);
+    raw_psd.extend_from_slice(&0u16.to_be_bytes());
+    raw_psd.extend_from_slice(&[0u8; 4]);
+    while raw_psd.len() % 8 != 0 {
+        raw_psd.push(0);
+    }
+
+    let psd = PsdTable::parse(&raw_psd, 8).unwrap();
+    let mut engine = PbcEngine::new(lot, psd);
+
+    // Initial start: begins 1st loop of motion menu
+    let act1 = engine.start().expect("start action");
+    assert_eq!(
+        act1,
+        PbcAction::PlayMotionMenu {
+            track_number: 2,
+            item_id: 2,
+            nos: 1,
+            bsn: 1,
+            timeout_sec: 4,
+        }
+    );
+    assert_eq!(engine.remaining_selection_loops(), Some(3));
+    // Timeout timer is NOT active while video is looping
+    assert!(!engine.has_active_timer());
+    assert_eq!(engine.remaining_timer_seconds(), None);
+
+    // 1st play finishes -> repeats for 2nd loop
+    let act2 = engine.on_item_finished().expect("repeat loop 2");
+    assert_eq!(
+        act2,
+        PbcAction::PlayMotionMenu {
+            track_number: 2,
+            item_id: 2,
+            nos: 1,
+            bsn: 1,
+            timeout_sec: 4,
+        }
+    );
+    assert_eq!(engine.remaining_selection_loops(), Some(2));
+    assert!(!engine.has_active_timer());
+
+    // 2nd play finishes -> repeats for 3rd loop
+    let act3 = engine.on_item_finished().expect("repeat loop 3");
+    assert_eq!(
+        act3,
+        PbcAction::PlayMotionMenu {
+            track_number: 2,
+            item_id: 2,
+            nos: 1,
+            bsn: 1,
+            timeout_sec: 4,
+        }
+    );
+    assert_eq!(engine.remaining_selection_loops(), Some(1));
+    assert!(!engine.has_active_timer());
+
+    // 3rd play finishes -> all loops completed, enters timeout wait phase!
+    let finish_act = engine.on_item_finished();
+    assert!(finish_act.is_none(), "after loops are exhausted, no new video plays; wait timer starts");
+    assert_eq!(engine.remaining_selection_loops(), Some(0));
+    assert!(engine.has_active_timer(), "timeout timer must now be active");
+    assert_eq!(engine.remaining_timer_seconds(), Some(4.0));
+
+    // Tick 2.0s -> remaining 2.0s
+    assert!(engine.tick(2.0).is_none());
+    assert!(engine.has_active_timer());
+    assert!((engine.remaining_timer_seconds().unwrap() - 2.0).abs() < 1e-4);
+
+    // Tick 2.1s -> timeout expires and jumps to unit 3 (EndList)!
+    let timeout_act = engine.tick(2.1).expect("timeout action");
+    assert_eq!(timeout_act, PbcAction::End);
+    assert!(!engine.has_active_timer());
+}
+
+#[test]
+fn test_pbc_selection_list_loop_count_infinite() {
+    let mut raw_lot = vec![0u8; 16];
+    raw_lot[2] = 0; raw_lot[3] = 0; // LID 1 -> unit 0
+    let lot = LotTable::parse(&raw_lot, 8).unwrap();
+
+    let mut raw_psd = Vec::new();
+    // SelectionList LID 1 at unit 0: motion menu (item_id = 2), loop_count = 0 (infinite), timeout = 5s
+    raw_psd.push(0x18);
+    raw_psd.push(0);
+    raw_psd.push(1);
+    raw_psd.push(1);
+    raw_psd.extend_from_slice(&1u16.to_be_bytes());
+    raw_psd.extend_from_slice(&0xFFFFu16.to_be_bytes());
+    raw_psd.extend_from_slice(&0xFFFFu16.to_be_bytes());
+    raw_psd.extend_from_slice(&0xFFFFu16.to_be_bytes());
+    raw_psd.extend_from_slice(&0xFFFFu16.to_be_bytes());
+    raw_psd.extend_from_slice(&0xFFFFu16.to_be_bytes());
+    raw_psd.push(5);
+    raw_psd.push(0x80); // bit 7 set, loop count bits 0..6 = 0 (infinite)
+    raw_psd.extend_from_slice(&2u16.to_be_bytes());
+    raw_psd.extend_from_slice(&0xFFFFu16.to_be_bytes());
+    while raw_psd.len() % 8 != 0 {
+        raw_psd.push(0);
+    }
+
+    let psd = PsdTable::parse(&raw_psd, 8).unwrap();
+    let mut engine = PbcEngine::new(lot, psd);
+
+    let act1 = engine.start().expect("start action");
+    assert_eq!(
+        act1,
+        PbcAction::PlayMotionMenu {
+            track_number: 2,
+            item_id: 2,
+            nos: 1,
+            bsn: 1,
+            timeout_sec: 5,
+        }
+    );
+
+    // Loops repeatedly without entering timeout
+    for _ in 0..10 {
+        let repeat = engine.on_item_finished().expect("infinite loop repeat");
+        assert_eq!(
+            repeat,
+            PbcAction::PlayMotionMenu {
+                track_number: 2,
+                item_id: 2,
+                nos: 1,
+                bsn: 1,
+                timeout_sec: 5,
+            }
+        );
+        assert!(!engine.has_active_timer(), "infinite loop never activates timeout countdown");
+    }
+}

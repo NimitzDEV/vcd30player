@@ -1310,6 +1310,28 @@ impl VcdKernel {
         Ok(())
     }
 
+    /// Directly selects a numbered item in VCD 2.0 PBC mode (e.g. from mouse click on an extended selection hotspot).
+    pub fn select_pbc_number(&mut self, number: usize) -> Result<(), String> {
+        let next_action = if let Some(ref mut pbc) = self.pbc {
+            pbc.select_number(number)?
+        } else {
+            None
+        };
+        if let Some(action) = next_action {
+            self.execute_pbc_action(action)?;
+        }
+        Ok(())
+    }
+
+    /// Hit-tests a point (px, py) in canvas coordinates against active extended selection hotspots.
+    /// Returns the matched `PbcSelectionArea` if hit.
+    pub fn hit_test_pbc_selection(&self, px: i32, py: i32) -> Option<crate::vcd::psd::PbcSelectionArea> {
+        if self.active_mode != ActiveDiscMode::Vcd20Classic {
+            return None;
+        }
+        self.pbc.as_ref().and_then(|pbc| pbc.hit_test_selection(px, py))
+    }
+
     /// Checks if the numeric input buffer has timed out (e.g. 2.0 seconds without Enter).
     /// If timed out, automatically confirms the buffered digits.
     pub fn check_pbc_digit_timeout(&mut self) -> Result<bool, String> {

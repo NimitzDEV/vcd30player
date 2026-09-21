@@ -58,10 +58,86 @@ pub struct SelectionListDesc {
     pub ext_area_data: Vec<u8>,
 }
 
+/// A rectangular selection area (hotspot) on an extended selection list screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PbcSelectionArea {
+    /// 0-based selection index (0..nos-1).
+    pub selection_index: usize,
+    /// Selection key number (bsn + selection_index).
+    pub selection_number: u8,
+    /// Normalized coordinates on 0..=255 grid.
+    pub x1_norm: u8,
+    pub y1_norm: u8,
+    pub x2_norm: u8,
+    pub y2_norm: u8,
+    /// Pixel coordinates on standard 352x288 canvas.
+    pub x1: u32,
+    pub y1: u32,
+    pub x2: u32,
+    pub y2: u32,
+}
+
+impl PbcSelectionArea {
+    /// Returns true if this selection area contains the point (px, py) on the 352x288 canvas.
+    pub fn contains_pixel(&self, px: i32, py: i32) -> bool {
+        if px < 0 || py < 0 {
+            return false;
+        }
+        let px = px as u32;
+        let py = py as u32;
+        px >= self.x1 && px <= self.x2 && py >= self.y1 && py <= self.y2
+    }
+
+    /// Whether this selection area has a non-zero, valid bounding rectangle.
+    pub fn is_valid(&self) -> bool {
+        self.x2 > self.x1 && self.y2 > self.y1
+    }
+}
+
 impl SelectionListDesc {
     /// Returns true if this is an Extended Selection List (0x1A).
     pub fn is_extended(&self) -> bool {
         self.descriptor_tag == 0x1A
+    }
+
+    /// Extracts all valid rectangular selection areas (hotspots) defined in an Extended Selection List (0x1A).
+    pub fn get_selection_areas(&self) -> Vec<PbcSelectionArea> {
+        if !self.is_extended() || self.ext_area_data.len() < 16 + (self.nos as usize) * 4 {
+            return Vec::new();
+        }
+
+        let mut areas = Vec::with_capacity(self.nos as usize);
+        let button_data = &self.ext_area_data[16..16 + (self.nos as usize) * 4];
+
+        for i in 0..(self.nos as usize) {
+            let offset = i * 4;
+            let x1_norm = button_data[offset];
+            let y1_norm = button_data[offset + 1];
+            let x2_norm = button_data[offset + 2];
+            let y2_norm = button_data[offset + 3];
+
+            if x2_norm > x1_norm && y2_norm > y1_norm {
+                let x1 = (x1_norm as u32 * 352) / 255;
+                let y1 = (y1_norm as u32 * 288) / 255;
+                let x2 = (x2_norm as u32 * 352) / 255;
+                let y2 = (y2_norm as u32 * 288) / 255;
+
+                areas.push(PbcSelectionArea {
+                    selection_index: i,
+                    selection_number: self.bsn.saturating_add(i as u8),
+                    x1_norm,
+                    y1_norm,
+                    x2_norm,
+                    y2_norm,
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                });
+            }
+        }
+
+        areas
     }
 }
 

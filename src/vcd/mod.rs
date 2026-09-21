@@ -14,7 +14,9 @@ pub use entries::{VcdEntries, VcdEntry};
 pub use info::VcdInfo;
 pub use lot::LotTable;
 pub use pbc::{PbcAction, PbcEngine, PbcState};
-pub use psd::{EndListDesc, PlayListDesc, PsdDescriptor, PsdTable, SelectionListDesc};
+pub use psd::{
+    EndListDesc, PbcSelectionArea, PlayListDesc, PsdDescriptor, PsdTable, SelectionListDesc,
+};
 pub use segment::{
     blit_segment_to_canvas, decode_segment_frame, decode_segment_item, DecodedSegment,
     downsample_704x576_to_352x288, resolve_segment_path,

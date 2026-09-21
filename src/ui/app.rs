@@ -1647,11 +1647,108 @@ impl VcdPlayerApp {
 
                 let is_vcd30 = self.is_disc_loaded()
                     && self.kernel.active_mode == crate::core::kernel::ActiveDiscMode::Vcd30Interactive;
+                let is_pbc_selection = self.is_disc_loaded()
+                    && self.kernel.active_mode == crate::core::kernel::ActiveDiscMode::Vcd20Classic
+                    && matches!(self.kernel.pbc.as_ref().map(|p| &p.state), Some(crate::vcd::PbcState::InSelection { .. }));
 
-                // If video is active or not in VCD 3.0 mode, keep canvas completely clean (no cursor, no hotspot overlays)
-                if self.kernel.is_video_active() || !is_vcd30 {
-                    self.hovered_hotspot = None;
-                } else {
+                if is_pbc_selection {
+                    // Mouse interaction & Hit testing for VCD 2.0 Extended Selection List (0x1A)
+                    let response = ui.interact(
+                        display_rect,
+                        ui.id().with("vcd_screen"),
+                        egui::Sense::click_and_drag(),
+                    );
+                    let hover_pos = ctx.input(|i| i.pointer.hover_pos());
+                    let prev_hovered = self.hovered_hotspot.take();
+                    let mut current_pbc_area = None;
+
+                    if let Some(mouse_pos) = hover_pos {
+                        if let Some((cx, cy)) = self.screen_to_canvas(mouse_pos, display_rect) {
+                            if let Some(area) = self.kernel.hit_test_pbc_selection(cx, cy) {
+                                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                                self.hovered_hotspot = Some(format!("PBC 选项 {}", area.selection_number));
+                                current_pbc_area = Some(area);
+                            }
+                        }
+                    }
+
+                    if prev_hovered != self.hovered_hotspot {
+                        ctx.request_repaint();
+                    }
+
+                    // Handle click on PBC selection area
+                    if response.clicked() {
+                        if let Some(area) = current_pbc_area {
+                            self.hovered_hotspot = None;
+                            let sel_num = area.selection_number as usize;
+                            match self.kernel.select_pbc_number(sel_num) {
+                                Ok(()) => {
+                                    self.set_status(self.i18n.t_fmt("status.action_triggered", &[&format!("PBC #{}", sel_num)]));
+                                    self.texture = None;
+                                    self.texture_dirty = true;
+                                    ctx.request_repaint();
+                                }
+                                Err(e) => {
+                                    self.set_status(self.i18n.t_fmt("status.nav_failed", &[&e.to_string()]));
+                                }
+                            }
+                        }
+                    }
+
+                    // Draw PBC Hotspots overlay if show_hotspots is true
+                    if self.show_hotspots {
+                        if let Some(ref pbc) = self.kernel.pbc {
+                            for area in pbc.get_active_selection_areas() {
+                                let p1 = self.canvas_to_screen(
+                                    area.x1 as i32,
+                                    area.y1 as i32,
+                                    display_rect,
+                                );
+                                let p2 = self.canvas_to_screen(
+                                    area.x2 as i32,
+                                    area.y2 as i32,
+                                    display_rect,
+                                );
+                                let r = Rect::from_two_pos(p1, p2);
+
+                                let target_label = format!("PBC 选项 {}", area.selection_number);
+                                let is_hovered = self.hovered_hotspot.as_deref() == Some(&target_label);
+                                let stroke_color = if is_hovered {
+                                    Color32::from_rgb(255, 230, 0)
+                                } else {
+                                    Color32::from_rgba_unmultiplied(0, 255, 255, 180)
+                                };
+
+                                painter.rect_stroke(
+                                    r,
+                                    2.0,
+                                    Stroke::new(1.5, stroke_color),
+                                    StrokeKind::Inside,
+                                );
+                                painter.rect_filled(
+                                    r,
+                                    2.0,
+                                    Color32::from_rgba_unmultiplied(
+                                        0,
+                                        255,
+                                        255,
+                                        if is_hovered { 60 } else { 20 },
+                                    ),
+                                );
+
+                                // Small label
+                                let font_id = egui::FontId::proportional(12.0);
+                                painter.text(
+                                    r.min + Vec2::new(3.0, 2.0),
+                                    egui::Align2::LEFT_TOP,
+                                    format!("{}", area.selection_number),
+                                    font_id,
+                                    stroke_color,
+                                );
+                            }
+                        }
+                    }
+                } else if is_vcd30 && !self.kernel.is_video_active() {
                     // Render OSD Cursor if active (e.g. WEIGHT.CHM sex selection / height digit entry)
                     if let Some((cx, cy)) = self.kernel.cursor_pos {
                         let p1 = self.canvas_to_screen(cx, cy, display_rect);
@@ -1751,55 +1848,57 @@ impl VcdPlayerApp {
                             all_areas.extend(doc.get_all_hotspots());
                         }
                         for area in all_areas {
-                                let (min_x, min_y, max_x, max_y) = area.display_bounds();
-                                let p1 = self.canvas_to_screen(
-                                    min_x,
-                                    min_y,
-                                    display_rect,
-                                );
-                                let p2 = self.canvas_to_screen(
-                                    max_x,
-                                    max_y,
-                                    display_rect,
-                                );
-                                let r = Rect::from_two_pos(p1, p2);
+                            let (min_x, min_y, max_x, max_y) = area.display_bounds();
+                            let p1 = self.canvas_to_screen(
+                                min_x,
+                                min_y,
+                                display_rect,
+                            );
+                            let p2 = self.canvas_to_screen(
+                                max_x,
+                                max_y,
+                                display_rect,
+                            );
+                            let r = Rect::from_two_pos(p1, p2);
 
-                                let is_hovered = self.hovered_hotspot.as_deref() == Some(&area.target);
-                                let stroke_color = if is_hovered {
-                                    Color32::from_rgb(255, 230, 0)
-                                } else {
-                                    Color32::from_rgba_unmultiplied(0, 255, 255, 180)
-                                };
+                            let is_hovered = self.hovered_hotspot.as_deref() == Some(&area.target);
+                            let stroke_color = if is_hovered {
+                                Color32::from_rgb(255, 230, 0)
+                            } else {
+                                Color32::from_rgba_unmultiplied(0, 255, 255, 180)
+                            };
 
-                                painter.rect_stroke(
-                                    r,
-                                    2.0,
-                                    Stroke::new(1.5, stroke_color),
-                                    StrokeKind::Inside,
-                                );
-                                painter.rect_filled(
-                                    r,
-                                    2.0,
-                                    Color32::from_rgba_unmultiplied(
-                                        0,
-                                        255,
-                                        255,
-                                        if is_hovered { 60 } else { 20 },
-                                    ),
-                                );
+                            painter.rect_stroke(
+                                r,
+                                2.0,
+                                Stroke::new(1.5, stroke_color),
+                                StrokeKind::Inside,
+                            );
+                            painter.rect_filled(
+                                r,
+                                2.0,
+                                Color32::from_rgba_unmultiplied(
+                                    0,
+                                    255,
+                                    255,
+                                    if is_hovered { 60 } else { 20 },
+                                ),
+                            );
 
-                                // Small label
-                                let font_id = egui::FontId::proportional(11.0);
-                                painter.text(
-                                    r.min + Vec2::new(3.0, 2.0),
-                                    egui::Align2::LEFT_TOP,
-                                    &area.target,
-                                    font_id,
-                                    stroke_color,
-                                );
-                            }
+                            // Small label
+                            let font_id = egui::FontId::proportional(11.0);
+                            painter.text(
+                                r.min + Vec2::new(3.0, 2.0),
+                                egui::Align2::LEFT_TOP,
+                                &area.target,
+                                font_id,
+                                stroke_color,
+                            );
                         }
                     }
+                } else {
+                    self.hovered_hotspot = None;
+                }
 
                     // Render Phosphor Green OSD on top of video / canvas
                     let persistent_time = if let Some(ref player) = self.kernel.active_video {

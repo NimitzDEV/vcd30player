@@ -5,7 +5,7 @@
 //! and standard home video player navigation (PBC, Prev, Next, Return, Default).
 
 use super::lot::LotTable;
-use super::psd::{PlayListDesc, PsdDescriptor, PsdTable, SelectionListDesc};
+use super::psd::{PbcSelectionArea, PlayListDesc, PsdDescriptor, PsdTable, SelectionListDesc};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PbcAction {
@@ -209,6 +209,26 @@ impl PbcEngine {
             let def_ofs = desc.default_ofs;
             if def_ofs != 0xFFFF {
                 return self.execute_descriptor_at_unit_offset(def_ofs);
+            }
+        }
+        None
+    }
+
+    /// Returns the active selection areas if the current state is an Extended Selection List (0x1A).
+    pub fn get_active_selection_areas(&self) -> Vec<PbcSelectionArea> {
+        if let PbcState::InSelection { ref desc, .. } = self.state {
+            desc.get_selection_areas()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Hit-tests canvas pixel coordinates against active selection areas.
+    /// Returns the matched `PbcSelectionArea` if a hotspot was hit.
+    pub fn hit_test_selection(&self, px: i32, py: i32) -> Option<PbcSelectionArea> {
+        for area in self.get_active_selection_areas() {
+            if area.contains_pixel(px, py) {
+                return Some(area);
             }
         }
         None

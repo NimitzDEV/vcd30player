@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use vcd30_player::audio::{AudioChannelMode, AudioManager};
 use vcd30_player::core::kernel::{ActiveDiscMode, VcdKernel};
 use vcd30_player::vcd::{
-    decode_segment_item, LotTable, PbcAction, PbcEngine, PbcState, PsdDescriptor, PsdTable,
+    decode_segment_item, LotTable, PbcAction, PbcEngine, PbcSelectionArea, PbcState, PsdDescriptor,
+    PsdTable,
 };
 
 /// Returns the path to the VCD 2.0 paradise reference disc if explicitly configured via env var or exists locally.
@@ -1352,4 +1353,214 @@ fn test_decode_segment_item_real_disc_or_skip() {
     } else {
         println!("Decoded video-only segment: {}x{}", decoded.width, decoded.height);
     }
+}
+
+#[test]
+fn test_extended_selection_list_0x1a_hotspot_parsing() {
+    let mut raw = Vec::new();
+    // Descriptor 0x1A: Extended Selection List
+    raw.push(0x1A);
+    raw.push(0); // flags
+    raw.push(3); // nos = 3
+    raw.push(1); // bsn = 1
+    raw.extend_from_slice(&1u16.to_be_bytes()); // lid = 1
+    raw.extend_from_slice(&0xFFFFu16.to_be_bytes()); // prev
+    raw.extend_from_slice(&0xFFFFu16.to_be_bytes()); // next
+    raw.extend_from_slice(&0xFFFFu16.to_be_bytes()); // return
+    raw.extend_from_slice(&0xFFFFu16.to_be_bytes()); // default
+    raw.extend_from_slice(&0xFFFFu16.to_be_bytes()); // timeout
+    raw.push(0); // timeout_time
+    raw.push(1); // loop_count
+    raw.extend_from_slice(&100u16.to_be_bytes()); // item_id = 100
+
+    // Selections offsets (nos = 3, 6 bytes)
+    raw.extend_from_slice(&10u16.to_be_bytes());
+    raw.extend_from_slice(&20u16.to_be_bytes());
+    raw.extend_from_slice(&30u16.to_be_bytes());
+
+    // Extended Area Data:
+    // 16 bytes header
+    raw.extend_from_slice(&[0u8; 16]);
+
+    // Button areas: 3 * 4 = 12 bytes
+    // Button 0: [10, 20, 50, 80]
+    raw.extend_from_slice(&[10, 20, 50, 80]);
+    // Button 1: [100, 120, 200, 220]
+    raw.extend_from_slice(&[100, 120, 200, 220]);
+    // Button 2: [1, 0, 1, 0] (invalid / placeholder: x2 <= x1 or y2 <= y1)
+    raw.extend_from_slice(&[1, 0, 1, 0]);
+
+    // Pad to multiple of offset_multiplier (8)
+    while raw.len() % 8 != 0 {
+        raw.push(0);
+    }
+
+    let psd = PsdTable::parse(&raw, 8).expect("parse PSD with 0x1A");
+    assert_eq!(psd.descriptors.len(), 1);
+
+    let desc = match &psd.descriptors[0] {
+        PsdDescriptor::SelectionList(d) => d,
+        _ => panic!("Expected SelectionList descriptor"),
+    };
+
+    assert!(desc.is_extended());
+    let areas: Vec<PbcSelectionArea> = desc.get_selection_areas();
+    // Only valid buttons (2 of 3) should be parsed
+    assert_eq!(areas.len(), 2);
+
+    // Check Area 0
+    assert_eq!(areas[0].selection_index, 0);
+    assert_eq!(areas[0].selection_number, 1);
+    assert_eq!(areas[0].x1_norm, 10);
+    assert_eq!(areas[0].y1_norm, 20);
+    assert_eq!(areas[0].x2_norm, 50);
+    assert_eq!(areas[0].y2_norm, 80);
+    assert_eq!(areas[0].x1, (10 * 352) / 255);
+    assert_eq!(areas[0].y1, (20 * 288) / 255);
+    assert_eq!(areas[0].x2, (50 * 352) / 255);
+    assert_eq!(areas[0].y2, (80 * 288) / 255);
+
+    // Check hit testing contains_pixel
+    assert!(areas[0].contains_pixel(areas[0].x1 as i32, areas[0].y1 as i32));
+    assert!(areas[0].contains_pixel(areas[0].x2 as i32, areas[0].y2 as i32));
+    assert!(areas[0].contains_pixel(
+        (areas[0].x1 as i32 + areas[0].x2 as i32) / 2,
+        (areas[0].y1 as i32 + areas[0].y2 as i32) / 2
+    ));
+    assert!(!areas[0].contains_pixel(areas[0].x1 as i32 - 1, areas[0].y1 as i32));
+    assert!(!areas[0].contains_pixel(areas[0].x2 as i32 + 1, areas[0].y2 as i32));
+
+    // Check Area 1
+    assert_eq!(areas[1].selection_index, 1);
+    assert_eq!(areas[1].selection_number, 2);
+    assert_eq!(areas[1].x1_norm, 100);
+    assert_eq!(areas[1].y1_norm, 120);
+    assert_eq!(areas[1].x2_norm, 200);
+    assert_eq!(areas[1].y2_norm, 220);
+    assert!(areas[1].contains_pixel(areas[1].x1 as i32, areas[1].y1 as i32));
+}
+
+#[test]
+fn test_pbc_engine_and_kernel_hotspot_interaction() {
+    // 1. Construct LOT table
+    // Unit multiplier = 8
+    let mut lot_raw = vec![0u8; 32];
+    // LID 1 -> Unit 0
+    lot_raw[2] = 0;
+    lot_raw[3] = 0;
+    // LID 2 -> Unit 8
+    lot_raw[4] = 0;
+    lot_raw[5] = 8;
+    // LID 3 -> Unit 12
+    lot_raw[6] = 0;
+    lot_raw[7] = 12;
+    let lot = LotTable::parse(&lot_raw, 8).expect("parse LOT");
+
+    // 2. Construct PSD with:
+    // - Unit 0: Extended Selection List 0x1A (LID 1, nos = 2, bsn = 1, item_id = 100)
+    //   Area 0: [20, 20, 80, 80] -> points to Unit 8
+    //   Area 1: [120, 120, 180, 180] -> points to Unit 12
+    // - Unit 8 (byte 64): PlayList 0x10 (LID 2, item = 1)
+    // - Unit 12 (byte 96): PlayList 0x10 (LID 3, item = 2)
+    let mut psd_raw = Vec::new();
+
+    // Unit 0: Extended Selection List
+    psd_raw.push(0x1A);
+    psd_raw.push(0); // flags
+    psd_raw.push(2); // nos = 2
+    psd_raw.push(1); // bsn = 1
+    psd_raw.extend_from_slice(&1u16.to_be_bytes()); // lid = 1
+    psd_raw.extend_from_slice(&0xFFFFu16.to_be_bytes()); // prev
+    psd_raw.extend_from_slice(&0xFFFFu16.to_be_bytes()); // next
+    psd_raw.extend_from_slice(&0xFFFFu16.to_be_bytes()); // return
+    psd_raw.extend_from_slice(&0xFFFFu16.to_be_bytes()); // default
+    psd_raw.extend_from_slice(&0xFFFFu16.to_be_bytes()); // timeout
+    psd_raw.push(0); // timeout_time
+    psd_raw.push(1); // loop_count
+    psd_raw.extend_from_slice(&100u16.to_be_bytes()); // item_id = 100
+
+    // Selections: Unit 8 and Unit 12
+    psd_raw.extend_from_slice(&8u16.to_be_bytes());
+    psd_raw.extend_from_slice(&12u16.to_be_bytes());
+
+    // Extended Area Data: 16 bytes header + 2 * 4 = 8 bytes buttons
+    psd_raw.extend_from_slice(&[0u8; 16]);
+    // Button 0: [20, 20, 80, 80]
+    psd_raw.extend_from_slice(&[20, 20, 80, 80]);
+    // Button 1: [120, 120, 180, 180]
+    psd_raw.extend_from_slice(&[120, 120, 180, 180]);
+
+    // Pad to unit 8 (64 bytes)
+    while psd_raw.len() < 64 {
+        psd_raw.push(0);
+    }
+
+    // Unit 8 (byte 64): EndList 0x1F (LID not required for EndList)
+    psd_raw.push(0x1F);
+    psd_raw.push(0); // next_disc = 0
+    psd_raw.extend_from_slice(&0u16.to_be_bytes()); // change_pic = 0
+
+    // Pad to unit 12 (96 bytes)
+    while psd_raw.len() < 96 {
+        psd_raw.push(0);
+    }
+
+    // Unit 12 (byte 96): PlayList 0x10
+    psd_raw.push(0x10);
+    psd_raw.push(1); // noi = 1
+    psd_raw.extend_from_slice(&3u16.to_be_bytes()); // lid = 3
+    psd_raw.extend_from_slice(&0xFFFFu16.to_be_bytes()); // prev
+    psd_raw.extend_from_slice(&0xFFFFu16.to_be_bytes()); // next
+    psd_raw.extend_from_slice(&0xFFFFu16.to_be_bytes()); // return
+    psd_raw.extend_from_slice(&0u16.to_be_bytes()); // ptime
+    psd_raw.push(0); // wtime
+    psd_raw.push(0); // atime
+    psd_raw.extend_from_slice(&2u16.to_be_bytes()); // items[0] = 2
+
+    // Pad to multiple of 8
+    while psd_raw.len() % 8 != 0 {
+        psd_raw.push(0);
+    }
+
+    let psd = PsdTable::parse(&psd_raw, 8).expect("parse PSD");
+    let mut engine = PbcEngine::new(lot, psd);
+    let action = engine.start().expect("start PBC");
+    assert!(matches!(action, PbcAction::DisplayStillMenu { .. }));
+
+    // Engine is now in InSelection state
+    let areas = engine.get_active_selection_areas();
+    assert_eq!(areas.len(), 2);
+    assert_eq!(areas[0].selection_number, 1);
+    assert_eq!(areas[1].selection_number, 2);
+
+    // Hit test with canvas pixel inside area 0
+    let hit0 = engine.hit_test_selection(areas[0].x1 as i32 + 5, areas[0].y1 as i32 + 5);
+    assert!(hit0.is_some());
+    assert_eq!(hit0.unwrap().selection_number, 1);
+
+    // Hit test outside
+    let hit_miss = engine.hit_test_selection(0, 0);
+    assert!(hit_miss.is_none());
+
+    // Hit test with canvas pixel inside area 1
+    let hit1 = engine.hit_test_selection(areas[1].x2 as i32 - 2, areas[1].y2 as i32 - 2);
+    assert!(hit1.is_some());
+    assert_eq!(hit1.unwrap().selection_number, 2);
+
+    // Now test integration with VcdKernel
+    let mut kernel = VcdKernel::new();
+    kernel.active_mode = ActiveDiscMode::Vcd20Classic;
+    kernel.pbc = Some(engine);
+
+    // hit_test_pbc_selection through kernel
+    let k_hit = kernel.hit_test_pbc_selection(areas[0].x1 as i32 + 5, areas[0].y1 as i32 + 5);
+    assert!(k_hit.is_some());
+    assert_eq!(k_hit.unwrap().selection_number, 1);
+
+    // Click hotspot 1 via select_pbc_number
+    let sel_res = kernel.select_pbc_number(1);
+    assert!(sel_res.is_ok());
+
+    // Verified: Engine transitioned to EndList (PbcState::Ended)!
+    assert_eq!(kernel.pbc.as_ref().unwrap().state, PbcState::Ended);
 }

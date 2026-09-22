@@ -11,8 +11,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 
-/// Default public URL for fetching version metadata from Cloudflare R2
-pub const VERSION_JSON_URL: &str = "https://content.vcd30player.app.nimitz.io/version.json";
+/// Default public URL for fetching version metadata from Cloudflare R2 / CDN
+pub const VERSION_JSON_URL: &str = "https://download-releases.nimitz.io/vcd30/version.json";
 
 /// Version metadata structure matching the CI-generated version.json
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -214,6 +214,9 @@ impl UpdateManager {
 
         std::thread::spawn(move || {
             let result = (|| -> Result<VersionInfo, String> {
+                if !VERSION_JSON_URL.starts_with("https://") {
+                    return Err("版本检查地址必须使用安全 HTTPS 协议".to_string());
+                }
                 let resp = ureq::get(VERSION_JSON_URL)
                     .timeout(std::time::Duration::from_secs(10))
                     .call()
@@ -287,6 +290,10 @@ impl UpdateManager {
     ) -> Result<(), String> {
         use sha2::{Digest, Sha256};
         use std::io::{Read, Write};
+
+        if !asset.url.starts_with("https://") {
+            return Err("下载地址必须使用安全 HTTPS 协议".to_string());
+        }
 
         let resp = ureq::get(&asset.url)
             .timeout(std::time::Duration::from_secs(30))
@@ -596,13 +603,13 @@ mod tests {
             "platforms": {
                 "windows-x64": {
                     "filename": "vcd30player-v0.3.0-windows-x64.zip",
-                    "url": "https://content.vcd30player.app.nimitz.io/v0.3.0/vcd30player-v0.3.0-windows-x64.zip",
+                    "url": "https://download-releases.nimitz.io/vcd30/v0.3.0/vcd30player-v0.3.0-windows-x64.zip",
                     "sha256": "5f4dcc3b5aa765d61d8327deb882cf99",
                     "size": 18234567
                 },
                 "linux-x64": {
                     "filename": "vcd30player-v0.3.0-linux-x64.tar.gz",
-                    "url": "https://content.vcd30player.app.nimitz.io/v0.3.0/vcd30player-v0.3.0-linux-x64.tar.gz",
+                    "url": "https://download-releases.nimitz.io/vcd30/v0.3.0/vcd30player-v0.3.0-linux-x64.tar.gz",
                     "sha256": "2c624232cdd221771294dfbb310aca00",
                     "size": 15234567
                 }
@@ -622,6 +629,12 @@ mod tests {
         );
         assert!(info.platforms.contains_key("windows-x64"));
         assert!(info.platforms.contains_key("linux-x64"));
+    }
+
+    #[test]
+    fn test_version_json_url_must_be_https() {
+        assert!(VERSION_JSON_URL.starts_with("https://"));
+        assert!(VERSION_JSON_URL.contains("download-releases.nimitz.io/vcd30"));
     }
 
     #[test]

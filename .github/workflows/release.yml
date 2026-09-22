@@ -90,7 +90,7 @@ jobs:
       - name: Generate Release Notes, Checksums, and version.json
         shell: bash
         env:
-          PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL || 'https://content.vcd30player.app.nimitz.io' }}
+          PUBLIC_URL: ${{ secrets.R2_PUBLIC_URL || 'https://download-releases.nimitz.io/vcd30' }}
         run: |
           TAG="${GITHUB_REF_NAME}"
           python3 -c "
@@ -99,6 +99,11 @@ jobs:
           tag = sys.argv[1]
           ver = tag.lstrip('v')
           public_url = sys.argv[2].rstrip('/')
+          if not public_url.startswith('https://'):
+              if public_url.startswith('http://'):
+                  public_url = 'https://' + public_url[7:]
+              else:
+                  public_url = 'https://' + public_url
 
           assets_dir = 'release-assets'
           platforms = {}
@@ -212,16 +217,23 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
 
           echo "Using S3 Endpoint: $ENDPOINT"
-          echo "Uploading release assets to Cloudflare R2: s3://${R2_BUCKET_NAME}/${TAG}/ ..."
-          aws s3 cp release-assets/ "s3://${R2_BUCKET_NAME}/${TAG}/" \
+          echo "Uploading release assets to Cloudflare R2: s3://${R2_BUCKET_NAME}/vcd30/${TAG}/ ..."
+          aws s3 cp release-assets/ "s3://${R2_BUCKET_NAME}/vcd30/${TAG}/" \
             --recursive \
             --endpoint-url "$ENDPOINT" \
             --cache-control "public, max-age=31536000, immutable"
 
-          echo "Uploading version.json to Cloudflare R2: s3://${R2_BUCKET_NAME}/version.json ..."
-          aws s3 cp version.json "s3://${R2_BUCKET_NAME}/version.json" \
+          echo "Uploading version.json to Cloudflare R2: s3://${R2_BUCKET_NAME}/vcd30/version.json ..."
+          aws s3 cp version.json "s3://${R2_BUCKET_NAME}/vcd30/version.json" \
             --endpoint-url "$ENDPOINT" \
-            --cache-control "public, max-age=60, s-maxage=60, no-cache"
+            --cache-control "public, max-age=60, s-maxage=60, no-cache" \
+            --content-type "application/json"
+
+          echo "Uploading version to Cloudflare R2: s3://${R2_BUCKET_NAME}/vcd30/version ..."
+          aws s3 cp version.json "s3://${R2_BUCKET_NAME}/vcd30/version" \
+            --endpoint-url "$ENDPOINT" \
+            --cache-control "public, max-age=60, s-maxage=60, no-cache" \
+            --content-type "application/json"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

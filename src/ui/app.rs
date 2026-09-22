@@ -412,8 +412,12 @@ impl VcdPlayerApp {
                 }
             }
         }
-        self.texture = None;
         self.texture_dirty = true;
+        if self.kernel.is_video_active() {
+            self.refresh_video_texture(ctx);
+        } else {
+            self.refresh_texture(ctx);
+        }
         ctx.request_repaint();
     }
 
@@ -501,8 +505,12 @@ impl VcdPlayerApp {
                     self.osd.show(format!("SELECT: TRK {:02}", t_idx));
                 }
             }
-            self.texture = None;
             self.texture_dirty = true;
+            if self.kernel.is_video_active() {
+                self.refresh_video_texture(&ctx);
+            } else {
+                self.refresh_texture(&ctx);
+            }
             ctx.request_repaint();
         } else if !self.kernel.pbc_digit_buffer.is_empty() {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
@@ -514,7 +522,6 @@ impl VcdPlayerApp {
             let new_frame = self.kernel.update_video();
             if !self.kernel.is_video_active() {
                 // Video ended during this update_video call!
-                self.texture = None;
                 self.texture_dirty = true;
                 self.refresh_texture(&ctx);
             } else if new_frame || self.texture_dirty {
@@ -525,7 +532,6 @@ impl VcdPlayerApp {
             if self.kernel.active_mode == crate::core::kernel::ActiveDiscMode::Vcd20Classic {
                 match self.kernel.update_pbc() {
                     Ok(true) => {
-                        self.texture = None;
                         self.texture_dirty = true;
                         if self.kernel.is_video_active() {
                             self.refresh_video_texture(&ctx);
@@ -956,8 +962,12 @@ impl VcdPlayerApp {
                             self.osd.show(format!("⏮ TRK {:02}", t_idx));
                         }
                     }
-                    self.texture = None;
                     self.texture_dirty = true;
+                    if self.kernel.is_video_active() {
+                        self.refresh_video_texture(&ctx);
+                    } else {
+                        self.refresh_texture(&ctx);
+                    }
                     ctx.request_repaint();
                 }
 
@@ -971,8 +981,12 @@ impl VcdPlayerApp {
                             self.osd.show(format!("⏭ TRK {:02}", t_idx));
                         }
                     }
-                    self.texture = None;
                     self.texture_dirty = true;
+                    if self.kernel.is_video_active() {
+                        self.refresh_video_texture(&ctx);
+                    } else {
+                        self.refresh_texture(&ctx);
+                    }
                     ctx.request_repaint();
                 }
 
@@ -992,8 +1006,8 @@ impl VcdPlayerApp {
                         self.set_status_i18n("status.stopped_video");
                     }
                     self.osd.show("⏹ STOP");
-                    self.texture = None;
                     self.texture_dirty = true;
+                    self.refresh_texture(&ctx);
                     ctx.request_repaint();
                 }
             });
@@ -1237,8 +1251,12 @@ impl VcdPlayerApp {
                         self.osd.show(format!("⏮ TRK {:02}", t_idx));
                     }
                 }
-                self.texture = None;
                 self.texture_dirty = true;
+                if self.kernel.is_video_active() {
+                    self.refresh_video_texture(&ctx);
+                } else {
+                    self.refresh_texture(&ctx);
+                }
                 ctx.request_repaint();
             }
 
@@ -1252,8 +1270,12 @@ impl VcdPlayerApp {
                         self.osd.show(format!("⏭ TRK {:02}", t_idx));
                     }
                 }
-                self.texture = None;
                 self.texture_dirty = true;
+                if self.kernel.is_video_active() {
+                    self.refresh_video_texture(&ctx);
+                } else {
+                    self.refresh_texture(&ctx);
+                }
                 ctx.request_repaint();
             }
 
@@ -1277,8 +1299,8 @@ impl VcdPlayerApp {
                     let _ = self.kernel.stop_video_and_exit();
                 }
                 self.osd.show("⏹ STOP");
-                self.texture = None;
                 self.texture_dirty = true;
+                self.refresh_texture(&ctx);
                 ctx.request_repaint();
             }
             if seek_delta != 0.0 {
@@ -1601,8 +1623,12 @@ impl VcdPlayerApp {
                                     let _ = self.kernel.play_track(idx);
                                     let track_num = format!("{:02}", self.kernel.tracks.get(idx).map(|t| t.index).unwrap_or(idx + 1));
                                     self.set_status(self.i18n.t_fmt("status.playing_track", &[&track_num, &selected_track_title]));
-                                    self.texture = None;
                                     self.texture_dirty = true;
+                                    if self.kernel.is_video_active() {
+                                        self.refresh_video_texture(&ctx);
+                                    } else {
+                                        self.refresh_texture(&ctx);
+                                    }
                                     ctx.request_repaint();
                                 }
                             }
@@ -1705,8 +1731,12 @@ impl VcdPlayerApp {
                             match self.kernel.select_pbc_number(sel_num) {
                                 Ok(()) => {
                                     self.set_status(self.i18n.t_fmt("status.action_triggered", &[&format!("PBC #{}", sel_num)]));
-                                    self.texture = None;
                                     self.texture_dirty = true;
+                                    if self.kernel.is_video_active() {
+                                        self.refresh_video_texture(&ctx);
+                                    } else {
+                                        self.refresh_texture(&ctx);
+                                    }
                                     ctx.request_repaint();
                                 }
                                 Err(e) => {
@@ -1839,12 +1869,12 @@ impl VcdPlayerApp {
                                         self.set_status(self.i18n.t_fmt("status.play_audio", &[&area.target]));
                                     } else if is_video || self.kernel.is_video_active() {
                                         self.set_status(self.i18n.t_fmt("status.play_video", &[&area.target]));
-                                        self.texture = None;
                                         self.texture_dirty = true;
+                                        self.refresh_video_texture(&ctx);
                                     } else {
                                         self.set_status(self.i18n.t_fmt("status.navigated_to", &[&area.target]));
-                                        self.texture = None;
                                         self.texture_dirty = true;
+                                        self.refresh_texture(&ctx);
                                     }
                                     ctx.request_repaint();
                                 }

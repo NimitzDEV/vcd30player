@@ -7,6 +7,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-23
+
+### Added
+- **ENTRIES.VCD Virtual Chapter Subdivision & Precise Seeking**:
+  - Automatically parses `ENTRIES.VCD` sector MSF timecodes to subdivide continuous MPEG-1 video tracks into independent virtual chapters.
+  - Added `VideoPlayer::new_with_seconds` and `VideoPlayer::set_clip_range` for instant chapter seeking without reloading media files from disk.
+  - Bound UI progress slider, elapsed timecode, $\pm 5\text{s}$ keyboard seeking, and green CRT OSD display strictly within active virtual chapter boundaries.
+- **Specification Compatibility Matrix**:
+  - Added detailed format feature support matrix across VCD 1.0/1.1, VCD 2.0 (PBC), VCD 2.0 (PBC-X), VCD 3.0, and Super VCD to `README.md` and `README_EN.md`.
+
+### Fixed
+- **Zero-Flicker Viewport Texture Rendering**:
+  - Eliminated single-frame black flicker during remote control numeric keypad clicks, digit input timeout confirmation, and track switching.
+  - Replaced destructive GPU texture discarding with in-place texture content updates (`TextureHandle::set`).
+
+### Changed
+- **Release Distribution & Secure Updates**:
+  - Enforced HTTPS download and update checking via `https://download-releases.nimitz.io/vcd30`.
+  - Updated release deployment workflow to upload binaries and `version.json` metadata to the `/vcd30` distribution directory.
+
 ## [0.6.0] - 2026-09-22
 
 ### Added
@@ -219,7 +239,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   - Test suite covering unit and integration tests across format parsing, VM execution, audio mixing, and video playback.
   - GitHub Actions CI workflow supporting automated check, test, and clippy runs on Windows and Ubuntu.
 
-[Unreleased]: https://github.com/NimitzDEV/vcd30player/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/NimitzDEV/vcd30player/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/NimitzDEV/vcd30player/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/NimitzDEV/vcd30player/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/NimitzDEV/vcd30player/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/NimitzDEV/vcd30player/compare/v0.4.0...v0.5.0

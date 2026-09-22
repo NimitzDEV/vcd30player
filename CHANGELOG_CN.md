@@ -7,6 +7,26 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-23
+
+### 新增
+- **ENTRIES.VCD 虚拟章节自动细分与精准时间寻轨**:
+  - 自动解析 `ENTRIES.VCD` 扇区 MSF 时间码，将单文件多节目的连续 MPEG-1 视频流细分为独立的虚拟章节轨道。
+  - 新增 `VideoPlayer::new_with_seconds` 与 `VideoPlayer::set_clip_range`，支持章节间零拷贝瞬时跳转，无需重新读取磁盘文件。
+  - 浮动视频控制栏、进度拖动条、键盘 $\pm 5$ 秒快进快退及荧光绿 CRT OSD 时间码均严格限定在当前虚拟章节时长范围内。
+- **格式规范支持度矩阵**:
+  - 在 `README.md` 与 `README_EN.md` 中新增跨 VCD 1.0/1.1、VCD 2.0 (标准 PBC)、VCD 2.0 (扩展 PBC-X)、VCD 3.0 以及 Super VCD 的全景特性支持矩阵。
+
+### 修复
+- **界面消隐与视口无闪烁纹理更新**:
+  - 彻底消除点击虚拟遥控器数字键、多位数字超时自动确认以及曲目切换过程中的单帧黑屏闪烁问题。
+  - 使用原位刷新管线（`TextureHandle::set`）替代原有的破坏性重置释放（`self.texture = None`），保证画面平滑过渡。
+
+### 变更
+- **发布分发与安全更新体系升级**:
+  - 强制使用 HTTPS 协议进行版本检测与增量更新，下载源迁移至 `https://download-releases.nimitz.io/vcd30`。
+  - 调整自动化 Release 发布工作流，产物与 `version.json` 元数据统一归档部署至 `/vcd30` 目录。
+
 ## [0.6.0] - 2026-09-22
 
 ### 新增
@@ -219,7 +239,8 @@
   - 测试用例覆盖格式解析、脚本虚拟机、音频与视频播放。
   - 配置 GitHub Actions 工作流，支持 Windows 与 Ubuntu 自动化测试。
 
-[Unreleased]: https://github.com/NimitzDEV/vcd30player/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/NimitzDEV/vcd30player/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/NimitzDEV/vcd30player/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/NimitzDEV/vcd30player/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/NimitzDEV/vcd30player/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/NimitzDEV/vcd30player/compare/v0.4.0...v0.5.0

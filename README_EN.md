@@ -53,6 +53,51 @@ Original player software relied on proprietary Windows 9x components and runtime
 
 ---
 
+## Feature Support Matrix
+
+| Category | Feature | VCD 1.0 / 1.1 | VCD 2.0 (Standard PBC) | VCD 2.0 (Extended PBC-X) | VCD 3.0 (Interactive) | Super VCD (SVCD) |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: |
+| **Disc Detection** | Directory layout & structure auto-detection | ✅ | ✅ | ✅ | ✅ | 🟡 (Detect only) |
+| | System info table parsing (`INFO.VCD`) | ✅ | ✅ | ✅ | ✅ | 🟡 (Header only) |
+| | Entry points & chapter indexing (`ENTRIES.VCD`) | ✅ | ✅ | ✅ | ✅ | ❌ |
+| | Interactive startup config (`AUTORUN.CLS`) | ➖ | ➖ | ➖ | ✅ | ➖ |
+| **A/V Decoding** | CD-XA sector demuxing (Mode 2 Form 2) | ✅ | ✅ | ✅ | ✅ | ❌ |
+| | MPEG-1 video playback (352×288 / 352×240) | ✅ | ✅ | ✅ | ✅ | ❌ (MPEG-2) |
+| | High-res still picture decoding (`SEGMENT/ITEMxxxx.DAT`) | ➖ | ✅ | ✅ | ✅ | ❌ |
+| | MPEG-1 Audio Layer II audio decoding | ✅ | ✅ | ✅ | ✅ | ❌ |
+| | Real-time stereo / karaoke audio channel routing | ✅ | ✅ | ✅ | ✅ | ❌ |
+| | Segment audio stream synchronization | ➖ | ✅ | ✅ | ➖ | ❌ |
+| | Independent sound effects & BGM (`.WAV` / `BGSOUND`) | ➖ | ➖ | ➖ | ✅ | ➖ |
+| **Playback Control** | Linear sequential track playback & seek | ✅ | ✅ | ✅ | ✅ | ❌ |
+| | White Book PBC state machine (`PlayList` / `SelectionList` / `EndList`) | ➖ | ✅ | ✅ | 🟡 (Compat layer) | ❌ |
+| | Duration limit (`ptime`) & menu repetitions (`loop_count`) | ➖ | ✅ | ✅ | ➖ | ❌ |
+| | Wait delay (`wtime`) & automatic timeout transitions | ➖ | ✅ | ✅ | ➖ | ❌ |
+| | Remote keypad multi-digit buffering & 2s auto-confirm | ✅ | ✅ | ✅ | ✅ | ❌ |
+| | Dedicated PBC return navigation | ➖ | ✅ | ✅ | ➖ | ❌ |
+| **Graphics & UI** | Markup pages & layer layouts (`<COMPHTML>` / `.CHM`) | ➖ | ➖ | ➖ | ✅ | ➖ |
+| | 8-bit paletted graphics & alpha blending (`.YBM`) | ➖ | ➖ | ➖ | ✅ | ➖ |
+| | Floating video controls & interactive progress bar | ✅ | ✅ | ✅ | ✅ | ❌ |
+| | Overlay pages & dialog compositing | ➖ | ➖ | ➖ | ✅ | ➖ |
+| | Polygon & rectangular hotspot hit testing | ➖ | ➖ | ➖ | ✅ | ➖ |
+| | Hotspot mouse hover with hand cursor feedback | ➖ | ➖ | ✅ | ✅ | ➖ |
+| | Direct mouse click hotspot selection | ➖ | ➖ | ✅ | ✅ | ➖ |
+| | Visual hotspot outline overlay | ➖ | ➖ | ✅ | ✅ | ➖ |
+| | CRT-style On-Screen Display (OSD / persistent timecode) | ✅ | ✅ | ✅ | ✅ | ❌ |
+| **Scripting** | VCDSCRIPT AST parser & coroutine VM | ➖ | ➖ | ➖ | ✅ | ➖ |
+| | Arithmetic expressions & `IF...THEN...ELSE` | ➖ | ➖ | ➖ | ✅ | ➖ |
+| | Subroutines (`GOSUB`) & animation delay scheduling | ➖ | ➖ | ➖ | ✅ | ➖ |
+| | Random numbers (`CALL RAND`) & key wait (`CALL IRKEY`) | ➖ | ➖ | ➖ | ✅ | ➖ |
+| | Karaoke playlist queue & sequential playback | ➖ | ➖ | ➖ | ✅ | ➖ |
+| | Interactive quiz scoring & dynamic numeric rendering | ➖ | ➖ | ➖ | ✅ | ➖ |
+
+> **Legend**:
+> * ✅ **Supported**: Fully implemented and verified by automated tests.
+> * 🟡 **Partial**: Format detection supported or running via compatibility layer.
+> * ❌ **Unsupported**: Currently not implemented (e.g. SVCD MPEG-2 VBR video).
+> * ➖ **N/A**: Not defined in this version's specification.
+
+---
+
 ## Pre-built Binaries
 
 Pre-compiled standalone archives are available on GitHub Releases:

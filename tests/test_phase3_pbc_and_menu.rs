@@ -4,7 +4,7 @@
 
 mod common;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use vcd30_player::audio::{AudioChannelMode, AudioManager};
 use vcd30_player::core::kernel::{ActiveDiscMode, VcdKernel};
 use vcd30_player::vcd::{
@@ -12,7 +12,7 @@ use vcd30_player::vcd::{
     PsdTable,
 };
 
-/// Returns the path to the VCD 2.0 paradise reference disc if explicitly configured via env var or exists locally.
+/// Returns the path to the VCD 2.0 paradise reference disc if explicitly configured via env var.
 fn get_paradise_disc_root() -> Option<PathBuf> {
     if let Some(val) = std::env::var_os("VCD_PARADISE_DISC") {
         let p = PathBuf::from(val);
@@ -20,12 +20,7 @@ fn get_paradise_disc_root() -> Option<PathBuf> {
             return Some(p);
         }
     }
-    let candidate = Path::new(r"E:\iso-disk\paradise-vcd2.0");
-    if candidate.exists() {
-        Some(candidate.to_path_buf())
-    } else {
-        None
-    }
+    None
 }
 
 #[test]
@@ -502,6 +497,8 @@ fn test_pbc_menu_navigation_to_track_clears_pbc_status() {
             title: "TRACK01.DAT".to_string(),
             file_name: "MPEGAV/TRACK01.DAT".to_string(),
             msf_start: None,
+            start_seconds: 0.0,
+            end_seconds: None,
         });
         kernel.current_page_name = "PBC 菜单 (ITEM0001.DAT)".to_string();
 

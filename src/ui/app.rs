@@ -886,12 +886,22 @@ impl VcdPlayerApp {
 
                     // 3. Timecode
                     let time_text = if let Some(ref player) = self.kernel.active_video {
-                        let cur = player.current_time();
-                        let dur = player.duration();
-                        let cur_min = (cur / 60.0) as u32;
-                        let cur_sec = (cur % 60.0) as u32;
-                        let dur_min = (dur / 60.0) as u32;
-                        let dur_sec = (dur % 60.0) as u32;
+                        let clip_start = player.clip_start_time();
+                        let clip_end = player.clip_end_time();
+                        let is_sub_clip = clip_start > 0.0 || (clip_end < player.duration() && clip_end < f64::MAX);
+
+                        let (cur_display, dur_display) = if is_sub_clip && clip_end > clip_start {
+                            let rel_cur = (player.current_time() - clip_start).max(0.0).min(clip_end - clip_start);
+                            let rel_dur = clip_end - clip_start;
+                            (rel_cur, rel_dur)
+                        } else {
+                            (player.current_time(), player.duration())
+                        };
+
+                        let cur_min = (cur_display / 60.0) as u32;
+                        let cur_sec = (cur_display % 60.0) as u32;
+                        let dur_min = (dur_display / 60.0) as u32;
+                        let dur_sec = (dur_display % 60.0) as u32;
                         format!("{:02}:{:02} / {:02}:{:02}", cur_min, cur_sec, dur_min, dur_sec)
                     } else {
                         "--:-- / --:--".to_string()
@@ -909,9 +919,18 @@ impl VcdPlayerApp {
                         ui.spacing_mut().slider_width = avail_w;
 
                         if let Some(ref mut player) = self.kernel.active_video {
-                            let dur = player.duration();
-                            let mut seek_pos = player.current_time();
-                            let slider = egui::Slider::new(&mut seek_pos, 0.0..=dur.max(1.0))
+                            let clip_start = player.clip_start_time();
+                            let clip_end = player.clip_end_time();
+                            let is_sub_clip = clip_start > 0.0 || (clip_end < player.duration() && clip_end < f64::MAX);
+
+                            let (slider_min, slider_max) = if is_sub_clip && clip_end > clip_start {
+                                (clip_start, clip_end)
+                            } else {
+                                (0.0, player.duration().max(1.0))
+                            };
+
+                            let mut seek_pos = player.current_time().clamp(slider_min, slider_max);
+                            let slider = egui::Slider::new(&mut seek_pos, slider_min..=slider_max)
                                 .show_value(false)
                                 .text("");
                             if ui.add(slider).changed() {
@@ -1265,11 +1284,13 @@ impl VcdPlayerApp {
             if seek_delta != 0.0 {
                 if let Some(ref mut player) = self.kernel.active_video {
                     let cur = player.current_time();
-                    let dur = player.duration();
-                    let target = (cur + seek_delta).clamp(0.0, dur);
+                    let clip_start = player.clip_start_time();
+                    let clip_end = player.clip_end_time().min(player.duration().max(0.1));
+                    let target = (cur + seek_delta).clamp(clip_start, clip_end);
                     player.seek(target);
-                    let m = (target / 60.0) as u32;
-                    let s = (target % 60.0) as u32;
+                    let rel_target = (target - clip_start).max(0.0);
+                    let m = (rel_target / 60.0) as u32;
+                    let s = (rel_target % 60.0) as u32;
                     if seek_delta > 0.0 {
                         self.osd.show(format!("⏩ +5s ({:02}:{:02})", m, s));
                     } else {
@@ -1902,12 +1923,22 @@ impl VcdPlayerApp {
 
                     // Render Phosphor Green OSD on top of video / canvas
                     let persistent_time = if let Some(ref player) = self.kernel.active_video {
-                        let cur = player.current_time();
-                        let dur = player.duration();
-                        let cur_m = (cur / 60.0) as u32;
-                        let cur_s = (cur % 60.0) as u32;
-                        let dur_m = (dur / 60.0) as u32;
-                        let dur_s = (dur % 60.0) as u32;
+                        let clip_start = player.clip_start_time();
+                        let clip_end = player.clip_end_time();
+                        let is_sub_clip = clip_start > 0.0 || (clip_end < player.duration() && clip_end < f64::MAX);
+
+                        let (cur_display, dur_display) = if is_sub_clip && clip_end > clip_start {
+                            let rel_cur = (player.current_time() - clip_start).max(0.0).min(clip_end - clip_start);
+                            let rel_dur = clip_end - clip_start;
+                            (rel_cur, rel_dur)
+                        } else {
+                            (player.current_time(), player.duration())
+                        };
+
+                        let cur_m = (cur_display / 60.0) as u32;
+                        let cur_s = (cur_display % 60.0) as u32;
+                        let dur_m = (dur_display / 60.0) as u32;
+                        let dur_s = (dur_display % 60.0) as u32;
                         if let Some(idx) = self.kernel.current_track_index {
                             if let Some(t) = self.kernel.tracks.get(idx) {
                                 format!("TRK {:02}  {:02}:{:02} / {:02}:{:02}", t.index, cur_m, cur_s, dur_m, dur_s)

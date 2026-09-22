@@ -833,6 +833,37 @@ impl VcdKernel {
         Ok(true)
     }
 
+    pub fn start_video_with_seconds(
+        &mut self,
+        filename: &str,
+        start_sec: f64,
+        end_sec: Option<f64>,
+        exit_target: Option<String>,
+    ) -> Result<bool, KernelError> {
+        let video_path = self
+            .find_file(filename)
+            .ok_or_else(|| KernelError::FileNotFound(PathBuf::from(filename)))?;
+
+        let bytes = std::fs::read(&video_path)
+            .map_err(|e| KernelError::ChmParseError(format!("Failed to read video file: {}", e)))?;
+
+        self.audio.stop_all();
+        let sink = self.audio.create_video_sink();
+        let mut player = VideoPlayer::new_with_seconds(
+            &bytes,
+            filename.to_string(),
+            sink,
+            start_sec,
+            end_sec,
+            exit_target,
+        )
+        .map_err(|e| KernelError::ChmParseError(format!("Video init error: {}", e)))?;
+        player.set_channel_mode(self.channel_mode);
+
+        self.active_video = Some(player);
+        Ok(true)
+    }
+
     pub fn stop_video_and_exit(&mut self) -> Result<bool, KernelError> {
         if let Some(mut player) = self.active_video.take() {
             player.stop();
@@ -1430,10 +1461,24 @@ impl VcdKernel {
         self.track_play_counter = self.track_play_counter.wrapping_add(1);
         let track = &self.tracks[track_idx];
         let fname = track.file_name.clone();
+        let start_sec = track.start_seconds;
+        let end_sec = track.end_seconds;
         self.current_track_index = Some(track_idx);
         self.current_page = None;
         self.current_page_name.clear();
-        self.start_video(&fname, 0, 0, None)
+
+        // If the active video player is already loaded for the same file, reuse it with instant range seek
+        if let Some(ref mut player) = self.active_video {
+            let is_same_file = player.filename.eq_ignore_ascii_case(&fname)
+                || player.filename.replace('\\', "/").eq_ignore_ascii_case(&fname.replace('\\', "/"));
+            if is_same_file {
+                player.set_clip_range(start_sec, end_sec);
+                player.play();
+                return Ok(true);
+            }
+        }
+
+        self.start_video_with_seconds(&fname, start_sec, end_sec, None)
     }
 
     /// Plays the track at `track_idx` with an optional playing time limit (`ptime`, in 1/15th second units).
@@ -1454,9 +1499,10 @@ impl VcdKernel {
             return Ok(false);
         }
         let cur_idx = self.current_track_index.unwrap_or(0);
+        let track_start = self.tracks.get(cur_idx).map(|t| t.start_seconds).unwrap_or(0.0);
         if let Some(ref mut player) = self.active_video {
-            if player.current_time() > 3.0 {
-                player.seek(0.0);
+            if player.current_time() > track_start + 3.0 {
+                player.seek(track_start);
                 return Ok(true);
             }
         }

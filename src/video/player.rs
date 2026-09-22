@@ -43,7 +43,7 @@ pub struct VideoPlayer {
 }
 
 impl VideoPlayer {
-    /// Creates a new VideoPlayer instance from raw .DAT or .MPG bytes.
+    /// Creates a new VideoPlayer instance from raw .DAT or .MPG bytes using start and end frame numbers.
     pub fn new(
         raw_bytes: &[u8],
         filename: String,
@@ -52,7 +52,42 @@ impl VideoPlayer {
         end_frame: u32,
         exit_target: Option<String>,
     ) -> Result<Self, String> {
-        let mut decoder = MpegDecoder::from_bytes(raw_bytes)?;
+        let decoder = MpegDecoder::from_bytes(raw_bytes)?;
+        let framerate = if decoder.framerate() > 0.0 {
+            decoder.framerate()
+        } else {
+            25.0
+        };
+        let start_sec = start_frame as f64 / framerate;
+        let end_sec = if end_frame > 0 {
+            Some(end_frame as f64 / framerate)
+        } else {
+            None
+        };
+        Self::from_decoder_and_seconds(decoder, filename, audio_sink, start_sec, end_sec, exit_target)
+    }
+
+    /// Creates a new VideoPlayer instance using precise start and end times in seconds (for virtual chapters).
+    pub fn new_with_seconds(
+        raw_bytes: &[u8],
+        filename: String,
+        audio_sink: Option<Sink>,
+        start_sec: f64,
+        end_sec: Option<f64>,
+        exit_target: Option<String>,
+    ) -> Result<Self, String> {
+        let decoder = MpegDecoder::from_bytes(raw_bytes)?;
+        Self::from_decoder_and_seconds(decoder, filename, audio_sink, start_sec, end_sec, exit_target)
+    }
+
+    fn from_decoder_and_seconds(
+        mut decoder: MpegDecoder,
+        filename: String,
+        audio_sink: Option<Sink>,
+        start_sec: f64,
+        end_sec: Option<f64>,
+        exit_target: Option<String>,
+    ) -> Result<Self, String> {
         let (width, height) = decoder.dimensions();
         let framerate = if decoder.framerate() > 0.0 {
             decoder.framerate()
@@ -69,15 +104,15 @@ impl VideoPlayer {
         let has_video = decoder.has_video();
 
         let clip_start_time = if duration > 0.0 {
-            (start_frame as f64 / framerate).min(duration)
+            start_sec.min(duration)
         } else {
-            start_frame as f64 / framerate
+            start_sec
         };
-        let clip_end_time = if end_frame > 0 {
+        let clip_end_time = if let Some(end) = end_sec {
             if duration > 0.0 {
-                (end_frame as f64 / framerate).min(duration)
+                end.min(duration)
             } else {
-                end_frame as f64 / framerate
+                end
             }
         } else if duration > 0.0 {
             duration
@@ -94,7 +129,6 @@ impl VideoPlayer {
             pixel[3] = 255;
         }
         let initial_pts = decoder.decode_video_frame(&mut current_frame_rgba).unwrap_or(clip_start_time);
-
 
         Ok(Self {
             decoder,
@@ -193,16 +227,10 @@ impl VideoPlayer {
         new_frame_decoded
     }
 
-    /// Toggles play / pause.
-    pub fn toggle_play_pause(&mut self) {
+    /// Resumes playback if paused or stopped/ended.
+    pub fn play(&mut self) {
         match self.state {
-            VideoPlayState::Playing => {
-                self.state = VideoPlayState::Paused;
-                self.pause_start_instant = Some(Instant::now());
-                if let Some(ref sink) = self.audio_sink {
-                    sink.pause();
-                }
-            }
+            VideoPlayState::Playing => {}
             VideoPlayState::Paused => {
                 self.state = VideoPlayState::Playing;
                 if let Some(pause_start) = self.pause_start_instant.take() {
@@ -216,6 +244,26 @@ impl VideoPlayer {
                 self.seek(self.clip_start_time);
                 self.state = VideoPlayState::Playing;
             }
+        }
+    }
+
+    /// Pauses playback if playing.
+    pub fn pause(&mut self) {
+        if self.state == VideoPlayState::Playing {
+            self.state = VideoPlayState::Paused;
+            self.pause_start_instant = Some(Instant::now());
+            if let Some(ref sink) = self.audio_sink {
+                sink.pause();
+            }
+        }
+    }
+
+    /// Toggles play / pause.
+    pub fn toggle_play_pause(&mut self) {
+        if self.state == VideoPlayState::Playing {
+            self.pause();
+        } else {
+            self.play();
         }
     }
 
@@ -296,6 +344,17 @@ impl VideoPlayer {
             let target_end = self.clip_start_time + max_duration_secs;
             self.clip_end_time = self.clip_end_time.min(target_end);
         }
+    }
+
+    /// Sets a new playback clip range [start_time, end_time) and immediately seeks to `start_time`.
+    pub fn set_clip_range(&mut self, start_time: f64, end_time: Option<f64>) {
+        let max_dur = if self.duration > 0.0 { self.duration } else { f64::MAX };
+        self.clip_start_time = start_time.min(max_dur);
+        self.clip_end_time = end_time.unwrap_or(max_dur).min(max_dur);
+        if self.state == VideoPlayState::Stopped || self.state == VideoPlayState::Ended {
+            self.state = VideoPlayState::Playing;
+        }
+        self.seek(self.clip_start_time);
     }
 
     pub fn is_playing(&self) -> bool {

@@ -34,48 +34,7 @@ pub struct VcdPlayerApp {
 }
 
 fn setup_custom_fonts(ctx: &egui::Context) {
-    let mut fonts = egui::FontDefinitions::default();
-
-    // Candidate CJK font paths on Windows, Linux, and macOS
-    let candidate_font_paths = [
-        // Windows (Microsoft YaHei, SimSun, SimHei)
-        r"C:\Windows\Fonts\msyh.ttc",
-        r"C:\Windows\Fonts\msyh.ttf",
-        r"C:\Windows\Fonts\simsun.ttc",
-        r"C:\Windows\Fonts\simhei.ttf",
-        // Linux
-        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        // macOS
-        "/System/Library/Fonts/PingFang.ttc",
-        "/Library/Fonts/Songti.ttc",
-    ];
-
-    for path in candidate_font_paths {
-        if let Ok(bytes) = std::fs::read(path) {
-            fonts.font_data.insert(
-                "cjk_font".to_owned(),
-                std::sync::Arc::new(egui::FontData::from_owned(bytes)),
-            );
-
-            // Add CJK font at highest priority for Proportional font family
-            fonts
-                .families
-                .entry(egui::FontFamily::Proportional)
-                .or_default()
-                .insert(0, "cjk_font".to_owned());
-
-            fonts
-                .families
-                .entry(egui::FontFamily::Monospace)
-                .or_default()
-                .push("cjk_font".to_owned());
-
-            break;
-        }
-    }
-
-    ctx.set_fonts(fonts);
+    egui_system_fonts::set_auto(ctx, egui_system_fonts::FontStyle::Sans);
 }
 
 /// Transient status message linger duration (5 seconds).
